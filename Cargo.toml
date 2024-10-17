@@ -1,0 +1,30 @@
+[package]
+name = "cloth_sim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { version = "1.0.86", features = ["backtrace"] }
+bytemuck = { version = "1.16.1", features = ["derive"] }
+env_logger = "0.10"
+glam = { version = "0.28.0", features = ["bytemuck"] }
+image = { version = "0.25.1", features = ["png", "jpeg"] }
+log = "0.4"
+pollster = "0.3.0"
+seq-macro = "0.3.5"
+thiserror = "1.0.61"
+tobj = { version = "4.0.2", features = ["async"] }
+wgpu = "0.19.3"
+winit = { version = "0.29.15", features = ["rwh_05"] }
+
+[dependencies.macros]
+path = "macros/"
+
+[build-dependencies]
+anyhow = "1.0.86"
+fs_extra = "1.3.0"
+glob = "0.3.1"
+
+[dev-dependencies]
+futures = "0.3.30"
+mktemp = "0.5.1"
