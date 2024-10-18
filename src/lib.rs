@@ -6,26 +6,28 @@
 //! This simple cloth simulation engine aims to showcase a minimal example of
 //! decent compute shader cloth simulation for educational purposes.
 
-mod camera;
 mod model;
 mod shader;
 mod texture;
 
-use winit::event_loop::{ControlFlow, EventLoopWindowTarget};
+use std::path::Path;
 
 use {
-    camera::{Camera, CameraData},
     model::{DrawModel, Model, Vertex},
     texture::Texture,
 };
 
 use {
+    notify::{
+        event::{AccessKind, AccessMode},
+        EventKind, RecursiveMode, Watcher,
+    },
     seq_macro::seq,
     wgpu::util::DeviceExt,
     winit::{
         dpi::{PhysicalPosition, PhysicalSize},
         event::*,
-        event_loop::EventLoop,
+        event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget},
         keyboard::{KeyCode, PhysicalKey},
         window::{Window, WindowBuilder},
     },
@@ -54,20 +56,6 @@ pub trait Updateable {
     fn update(&mut self, queue: &wgpu::Queue);
 }
 
-macro_rules! mat4_vertex_attribute {
-    ($shader_location_start:literal .. $shader_location_end:literal) => {{
-        assert_eq!($shader_location_start + 4, $shader_location_end, "Range must be exactly 4 long");
-
-        seq!(N in $shader_location_start..$shader_location_end {&[#(
-            wgpu::VertexAttribute {
-                offset: (N - $shader_location_start) * std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                format: wgpu::VertexFormat::Float32x4,
-                shader_location: N,
-            },
-        )*]})
-    }};
-}
-
 struct State<'a> {
     surface: wgpu::Surface<'a>,
     device: wgpu::Device,
@@ -75,15 +63,15 @@ struct State<'a> {
     config: wgpu::SurfaceConfiguration,
     size: PhysicalSize<u32>,
 
-    render_pipelines: Vec<wgpu::RenderPipeline>,
-    current_render_pipeline: usize,
+    render_pipeline: wgpu::RenderPipeline,
+    render_pipeline_layout: wgpu::PipelineLayout,
 
     obj_model: Model,
 
     depth_texture: Texture,
 
-    camera: Camera,
-
+    file_watcher: notify::RecommendedWatcher,
+    fs_event_receiver: std::sync::mpsc::Receiver<()>,
     start_time: std::time::Instant,
     previous_update_time: std::time::Instant,
     time_buffer: wgpu::Buffer,
@@ -150,20 +138,6 @@ impl<'a> State<'a> {
         // Depth texture
         let depth_texture = Texture::create_depth_texture(&device, &config, "Depth Texture");
 
-        // Camera
-        let camera = Camera::new(
-            &device,
-            CameraData {
-                eye: (0., 1., 2.).into(),
-                target: glam::Vec3::ZERO,
-                up: glam::Vec3::Y,
-                aspect: config.width as f32 / config.height as f32,
-                fovy: 45.,
-                znear: 0.1,
-                zfar: 100.,
-            },
-        );
-
         // Time uniform
         let time_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Time Buffer"),
@@ -194,63 +168,19 @@ impl<'a> State<'a> {
         });
 
         // Render pipeline
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-        });
-
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&camera.bind_group_layout, &time_bind_group_layout],
+                bind_group_layouts: &[&time_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
-        let render_pipelines = [shader]
-            .into_iter()
-            .map(|shader| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("Render Pipeline"),
-                    layout: Some(&render_pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: "vs_main",
-                        buffers: &[model::ModelVertex::desc()],
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: "fs_main",
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: config.format,
-                            blend: Some(wgpu::BlendState::REPLACE),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        strip_index_format: None,
-                        front_face: wgpu::FrontFace::Ccw,
-                        cull_mode: Some(wgpu::Face::Back),
-                        polygon_mode: wgpu::PolygonMode::Fill,
-                        unclipped_depth: false,
-                        conservative: false,
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: Texture::DEPTH_FORMAT,
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        mask: !0,
-                        alpha_to_coverage_enabled: false,
-                    },
-                    multiview: None,
-                })
-            })
-            .collect();
+        let render_pipeline = Self::create_render_pipeline(
+            &device,
+            &config,
+            Path::new("assets/shader.wgsl"),
+            &render_pipeline_layout,
+        );
 
         // Model
         let obj_model = match Model::from_file("plane.obj", &device, &queue).await {
@@ -258,25 +188,99 @@ impl<'a> State<'a> {
             Err(e) => panic!("{e:?}"),
         };
 
+        // File Watcher
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut file_watcher =
+            notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                if let Ok(notify::Event {
+                    kind: EventKind::Access(AccessKind::Close(AccessMode::Write)),
+                    ..
+                }) = res
+                {
+                    tx.send(()).unwrap();
+                }
+            })
+            .expect("Should startup watcher");
+        file_watcher
+            .watch(Path::new("assets/shader.wgsl"), RecursiveMode::NonRecursive)
+            .expect("Should start watching file");
+
         Self {
             surface,
             device,
             queue,
             config,
             size,
-            render_pipelines,
-            current_render_pipeline: 0,
+            render_pipeline,
             obj_model,
             depth_texture,
-            camera,
+            file_watcher,
+            fs_event_receiver: rx,
             start_time: std::time::Instant::now(),
             previous_update_time: std::time::Instant::now(),
             time_buffer,
             time_bind_group,
+            render_pipeline_layout,
             time_deltas_last_second: Vec::new(),
             cursor: None,
             window,
         }
+    }
+
+    fn create_render_pipeline(
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+        shader: &Path,
+        render_pipeline_layout: &wgpu::PipelineLayout,
+    ) -> wgpu::RenderPipeline {
+        let shader_code =
+            std::fs::read_to_string(shader).expect("Shader code should be available at path");
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Shader"),
+            source: wgpu::ShaderSource::Wgsl(shader_code.into()),
+        });
+
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                buffers: &[model::ModelVertex::desc()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: Texture::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+        })
     }
 
     pub fn window(&self) -> &Window {
@@ -296,7 +300,7 @@ impl<'a> State<'a> {
     }
 
     fn input(&mut self, event: &WindowEvent) -> bool {
-        self.camera.process_events(event)
+        false
     }
 
     fn update(&mut self) {
@@ -314,17 +318,26 @@ impl<'a> State<'a> {
             self.time_deltas_last_second.clear();
         }
 
-        // Camera
-        self.camera.update(&self.queue);
-
         // Time
         self.queue.write_buffer(
             &self.time_buffer,
             0,
             bytemuck::cast_slice(&[self.start_time.elapsed().as_secs_f32()]),
         );
-
         self.previous_update_time = std::time::Instant::now();
+
+        // File watcher
+        if self.fs_event_receiver.try_recv().is_ok() {
+            // Drain channel
+            while let Ok(_) = self.fs_event_receiver.try_recv() {}
+
+            self.render_pipeline = Self::create_render_pipeline(
+                &self.device,
+                &self.config,
+                Path::new("assets/shader.wgsl"),
+                &self.render_pipeline_layout,
+            );
+        }
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -362,12 +375,9 @@ impl<'a> State<'a> {
                 timestamp_writes: None,
             });
 
-            render_pass.set_pipeline(
-                &self.render_pipelines[self.current_render_pipeline % self.render_pipelines.len()],
-            );
+            render_pass.set_pipeline(&self.render_pipeline);
 
-            render_pass.set_bind_group(0, &self.camera.bind_group, &[]);
-            render_pass.set_bind_group(1, &self.time_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.time_bind_group, &[]);
 
             render_pass.draw_model(&self.obj_model);
         }
@@ -409,15 +419,6 @@ fn handle_event(state: &mut State<'_>, event: Event<()>, control_flow: &EventLoo
                         },
                     ..
                 } => control_flow.exit(),
-                WindowEvent::KeyboardInput {
-                    event:
-                        KeyEvent {
-                            state: ElementState::Pressed,
-                            physical_key: PhysicalKey::Code(KeyCode::Space),
-                            ..
-                        },
-                    ..
-                } => state.current_render_pipeline += 1,
                 WindowEvent::CursorMoved {
                     device_id: _,
                     position,
