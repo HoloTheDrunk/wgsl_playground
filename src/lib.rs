@@ -15,7 +15,7 @@ use winit::event_loop::{ControlFlow, EventLoopWindowTarget};
 
 use {
     camera::{Camera, CameraData},
-    model::{Model, Vertex},
+    model::{DrawModel, Model, Vertex},
     texture::Texture,
 };
 
@@ -253,7 +253,7 @@ impl<'a> State<'a> {
             .collect();
 
         // Model
-        let obj_model = match Model::from_file("cube.obj", &device, &queue).await {
+        let obj_model = match Model::from_file("plane.obj", &device, &queue).await {
             Ok(v) => v,
             Err(e) => panic!("{e:?}"),
         };
@@ -340,25 +340,13 @@ impl<'a> State<'a> {
             });
 
         {
-            // Match background color with mouse UV position
-            let win_size = self.window.inner_size();
-            let color = self
-                .cursor
-                .map(|cursor| wgpu::Color {
-                    r: (cursor.x / win_size.width as f64).clamp(0., win_size.width as f64),
-                    g: (cursor.y / win_size.height as f64).clamp(0., win_size.height as f64),
-                    b: 0.,
-                    a: 1.,
-                })
-                .unwrap_or_default();
-
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(color),
+                        load: wgpu::LoadOp::Clear(wgpu::Color::RED),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -381,25 +369,7 @@ impl<'a> State<'a> {
             render_pass.set_bind_group(0, &self.camera.bind_group, &[]);
             render_pass.set_bind_group(1, &self.time_bind_group, &[]);
 
-            // render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            // render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-
-            // render_pass.draw_indexed(0..self.num_indices, 0, 0..self.instances.len() as _);
-
-            // let mesh = &self.obj_model.meshes[0];
-            // let material = &self.obj_model.materials[mesh.material];
-            // render_pass.draw_mesh_instanced(
-            //     mesh,
-            //     material,
-            //     0..self.instances.len() as u32,
-            //     &self.camera_bind_group,
-            // );
-
-            // render_pass.draw_model_instanced(
-            //     &self.obj_model,
-            //     0..self.instances.len() as u32,
-            //     &self.camera.bind_group,
-            // )
+            render_pass.draw_model(&self.obj_model);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
