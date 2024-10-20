@@ -12,6 +12,8 @@ mod texture;
 
 use std::path::Path;
 
+use bytemuck::Zeroable;
+
 use {
     model::{DrawModel, Model, Vertex},
     texture::Texture,
@@ -56,6 +58,13 @@ pub trait Updateable {
     fn update(&mut self, queue: &wgpu::Queue);
 }
 
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+struct CursorUV {
+    x: f32,
+    y: f32,
+}
+
 struct State<'a> {
     surface: wgpu::Surface<'a>,
     device: wgpu::Device,
@@ -79,6 +88,9 @@ struct State<'a> {
     time_deltas_last_second: Vec<f32>,
 
     cursor: Option<PhysicalPosition<f64>>,
+    cursor_bind_group: wgpu::BindGroup,
+    cursor_buffer: wgpu::Buffer,
+
     window: &'a Window,
 }
 
@@ -114,7 +126,7 @@ impl<'a> State<'a> {
                 None,
             )
             .await
-            .unwrap();
+            .expect("Should find compatible device");
 
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps
@@ -130,7 +142,14 @@ impl<'a> State<'a> {
             format: surface_format,
             width: size.width,
             height: size.height,
-            present_mode: surface_caps.present_modes[0],
+            present_mode: if surface_caps
+                .present_modes
+                .contains(&wgpu::PresentMode::Immediate)
+            {
+                wgpu::PresentMode::Immediate
+            } else {
+                surface_caps.present_modes[0]
+            },
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: Vec::new(),
             desired_maximum_frame_latency: 2,
@@ -168,11 +187,40 @@ impl<'a> State<'a> {
             }],
         });
 
+        // Cursor uniform
+        let cursor_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Cursor Buffer"),
+            contents: bytemuck::bytes_of(&CursorUV::zeroed()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let cursor_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Cursor Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let cursor_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Cursor Bind Group"),
+            layout: &cursor_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: cursor_buffer.as_entire_binding(),
+            }],
+        });
+
         // Render pipeline
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&time_bind_group_layout],
+                bind_group_layouts: &[&time_bind_group_layout, &cursor_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -225,6 +273,8 @@ impl<'a> State<'a> {
             render_pipeline_layout,
             time_deltas_last_second: Vec::new(),
             cursor: None,
+            cursor_buffer,
+            cursor_bind_group,
             window,
         }
     }
@@ -338,6 +388,17 @@ impl<'a> State<'a> {
         );
         self.previous_update_time = std::time::Instant::now();
 
+        // Cursor
+        let pos = self.cursor.unwrap_or(PhysicalPosition { x: 0., y: 0. });
+        self.queue.write_buffer(
+            &self.cursor_buffer,
+            0,
+            bytemuck::cast_slice(&[CursorUV {
+                x: (pos.x / self.size.width as f64) as f32,
+                y: (pos.y / self.size.height as f64) as f32,
+            }]),
+        );
+
         // File watcher
         if self.fs_event_receiver.try_recv().is_ok() {
             // Drain channel
@@ -392,6 +453,7 @@ impl<'a> State<'a> {
             render_pass.set_pipeline(&self.render_pipeline);
 
             render_pass.set_bind_group(0, &self.time_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.cursor_bind_group, &[]);
 
             render_pass.draw_model(&self.obj_model);
         }

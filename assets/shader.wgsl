@@ -3,6 +3,9 @@
 @group(0) @binding(0)
 var<uniform> time: f32;
 
+@group(1) @binding(0)
+var<uniform> cursor: vec2<f32>;
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) tex_coords: vec2<f32>,
@@ -32,7 +35,10 @@ fn disc(point: vec2<f32>, center: vec2<f32>, radius: f32) -> f32 {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let d = disc(in.tex_coords, vec2<f32>(0.5, 0.5), .4);
+    // return vec4<f32>(in.tex_coords.x, in.tex_coords.y, 0., 1.);
+
+    // let d = disc(in.tex_coords, vec2<f32>(0.5, 0.5), .4);
+    let d = disc(in.tex_coords, cursor, .1);
 
     let col = f32(abs(d) < 0.05) + abs(d) * f32(d < -0.05);
     return vec4<f32>(col, col, col, 1.);
