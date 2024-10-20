@@ -106,6 +106,7 @@ impl<'a> State<'a> {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
+                    memory_hints: wgpu::MemoryHints::Performance,
                     required_features: wgpu::Features::empty(),
                     required_limits: wgpu::Limits::default(),
                     label: None,
@@ -180,7 +181,8 @@ impl<'a> State<'a> {
             &config,
             Path::new("assets/shader.wgsl"),
             &render_pipeline_layout,
-        );
+        )
+        .expect("Shader should compile");
 
         // Model
         let obj_model = match Model::from_file("plane.obj", &device, &queue).await {
@@ -232,55 +234,65 @@ impl<'a> State<'a> {
         config: &wgpu::SurfaceConfiguration,
         shader: &Path,
         render_pipeline_layout: &wgpu::PipelineLayout,
-    ) -> wgpu::RenderPipeline {
+    ) -> Result<wgpu::RenderPipeline, wgpu::CompilationInfo> {
         let shader_code =
             std::fs::read_to_string(shader).expect("Shader code should be available at path");
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(shader_code.into()),
         });
+        if let Some(_) = pollster::block_on(device.pop_error_scope()) {
+            let comp_info = pollster::block_on(shader.get_compilation_info());
+            return Err(comp_info);
+        }
 
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &[model::ModelVertex::desc()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
+        Ok(
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                cache: None,
+                label: Some("Render Pipeline"),
+                layout: Some(render_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    compilation_options: Default::default(),
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &[model::ModelVertex::desc()],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    compilation_options: Default::default(),
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: config.format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: Texture::DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: Texture::DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-        })
+        )
     }
 
     pub fn window(&self) -> &Window {
@@ -331,12 +343,14 @@ impl<'a> State<'a> {
             // Drain channel
             while let Ok(_) = self.fs_event_receiver.try_recv() {}
 
-            self.render_pipeline = Self::create_render_pipeline(
+            if let Ok(new_pipeline) = Self::create_render_pipeline(
                 &self.device,
                 &self.config,
                 Path::new("assets/shader.wgsl"),
                 &self.render_pipeline_layout,
-            );
+            ) {
+                self.render_pipeline = new_pipeline;
+            }
         }
     }
 

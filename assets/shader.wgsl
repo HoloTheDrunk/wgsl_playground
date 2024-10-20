@@ -25,7 +25,15 @@ fn vs_main(
 
 // Fragment shader
 
+fn disc(point: vec2<f32>, center: vec2<f32>, radius: f32) -> f32 {
+    let dist = distance(point, center);
+    return (dist - radius) / radius;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.tex_coords.x, in.tex_coords.y, 0., 1.);
+    let d = disc(in.tex_coords, vec2<f32>(0.5, 0.5), .4);
+
+    let col = f32(abs(d) < 0.05) + abs(d) * f32(d < -0.05);
+    return vec4<f32>(col, col, col, 1.);
 }
