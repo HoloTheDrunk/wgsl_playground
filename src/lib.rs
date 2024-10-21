@@ -97,6 +97,8 @@ struct State<'a> {
 impl<'a> State<'a> {
     async fn new(window: &'a Window) -> Self {
         let size = window.inner_size();
+        let min_dim = size.width.min(size.height);
+        window.request_inner_size(winit::dpi::LogicalSize::new(min_dim, min_dim));
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
@@ -285,8 +287,9 @@ impl<'a> State<'a> {
         shader: &Path,
         render_pipeline_layout: &wgpu::PipelineLayout,
     ) -> Result<wgpu::RenderPipeline, wgpu::CompilationInfo> {
-        let shader_code =
-            std::fs::read_to_string(shader).expect("Shader code should be available at path");
+        let shader_code = shader::Shader::try_from(shader)
+            .expect("Shader code should be available at path")
+            .finish();
 
         device.push_error_scope(wgpu::ErrorFilter::Validation);
         let mut shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -469,7 +472,10 @@ pub async fn run() {
     env_logger::init();
 
     let event_loop = EventLoop::new().unwrap();
-    let window = WindowBuilder::new().build(&event_loop).unwrap();
+    let window = WindowBuilder::new()
+        .with_title("WGSL Playground")
+        .build(&event_loop)
+        .unwrap();
 
     let mut state = State::new(&window).await;
 

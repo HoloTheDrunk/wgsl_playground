@@ -91,9 +91,7 @@ impl Model {
                     let path = std::path::Path::new(env!("OUT_DIR")).join("assets").join(p);
                     std::fs::read_to_string(path.clone()).unwrap()
                 };
-                dbg!(tobj::load_mtl_buf(&mut BufReader::new(Cursor::new(
-                    mat_text
-                ))))
+                tobj::load_mtl_buf(&mut BufReader::new(Cursor::new(mat_text)))
             },
         )
         .await?;

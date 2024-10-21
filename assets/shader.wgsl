@@ -16,6 +16,15 @@ struct VertexOutput {
     @location(0) tex_coords: vec2<f32>,
 };
 
+const OUTSIDE_COLOR: vec3<f32> = vec3<f32>(0., 1., 1.);
+const INSIDE_COLOR: vec3<f32> = vec3<f32>(1., 0., 1.);
+
+const LINE_DISTANCE: f32 = .25;
+const LINE_THICKNESS: f32 = 0.005;
+
+const SUB_LINES: u32 = 4;
+const SUB_LINE_THICKNESS: f32 = 0.0025;
+
 @vertex
 fn vs_main(
     model: VertexInput,
@@ -28,18 +37,34 @@ fn vs_main(
 
 // Fragment shader
 
-fn disc(point: vec2<f32>, center: vec2<f32>, radius: f32) -> f32 {
-    let dist = distance(point, center);
-    return (dist - radius) / radius;
-}
+//% include "sdf"
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // return vec4<f32>(in.tex_coords.x, in.tex_coords.y, 0., 1.);
+    let uv = in.tex_coords;
 
-    // let d = disc(in.tex_coords, vec2<f32>(0.5, 0.5), .4);
-    let d = disc(in.tex_coords, cursor, .1);
+    let box_left = vec2<f32>(.5 - .15, .5);
+    var shapes = array<f32, 3>(
+        disc(uv, cursor, .1),
+        disc(uv, box_left + vec2<f32>(.3, .1), .1),
+        rectangle(uv, box_left + vec2<f32>(.15, 0), vec2<f32>(.15, .1)),
+    );
+    
+    var dist: f32 = shapes[0];
+    for (var i: i32 = 1; i < 3; i++) {
+        dist = round_merge(dist, shapes[i], .05);
+        // dist = merge(dist, shapes[i]);
+    }
 
-    let col = f32(abs(d) < 0.05) + abs(d) * f32(d < -0.05);
-    return vec4<f32>(col, col, col, 1.);
+    let distance_change = fwidth(dist) * 0.5;
+
+    let major_line_distance = abs(fract(dist / LINE_DISTANCE + .5) - .5) * LINE_DISTANCE;
+    let major_lines = smoothstep(LINE_THICKNESS - distance_change, LINE_THICKNESS + distance_change, major_line_distance);
+
+    let distance_between_sub_lines = LINE_DISTANCE / f32(SUB_LINES);
+    let sub_line_distance = abs(fract(dist / distance_between_sub_lines + .5) - 0.5) * distance_between_sub_lines;
+    let sub_lines = smoothstep(SUB_LINE_THICKNESS - distance_change, SUB_LINE_THICKNESS + distance_change, sub_line_distance);
+
+    return vec4<f32>(min(major_lines, sub_lines) * select(OUTSIDE_COLOR, INSIDE_COLOR, dist < 0.), 1.);
+    // return f32(dist < 0) * vec4<f32>(1.);
 }
