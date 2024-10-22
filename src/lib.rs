@@ -7,8 +7,10 @@
 //! decent compute shader cloth simulation for educational purposes.
 
 mod model;
+mod mouse;
 mod shader;
 mod texture;
+mod timer;
 
 use std::path::Path;
 
