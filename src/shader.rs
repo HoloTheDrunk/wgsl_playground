@@ -70,9 +70,12 @@ impl Shader {
                         }
 
                         let sys_workdir = std::env::current_dir();
-                        let workdir = path
-                            .parent()
-                            .unwrap_or(sys_workdir.as_ref().expect("OS-level fail").as_path());
+                        let workdir = path.parent().unwrap_or(
+                            sys_workdir
+                                .as_ref()
+                                .expect("Should be valid working directory")
+                                .as_path(),
+                        );
 
                         let include_path = format!("{}.wgsl", &parts[1][1..(parts[1].len() - 1)]);
                         let include_path = workdir.join(include_path);

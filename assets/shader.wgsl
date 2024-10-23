@@ -42,13 +42,15 @@ fn vs_main(
 
 // Fragment shader
 
-//% include "sdf"
+//% include "lib/sdf"
 //% include "generated/mouse_state"
+//% include "lib/noise/perlin"
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let uv = in.tex_coords;
 
+    // --- SDFs
     let box_left = vec2<f32>(.5 - .15, .5);
     var shapes = array<f32, 3>(
         disc(uv, mouse.pos, .1),
@@ -58,7 +60,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     
     var dist: f32 = shapes[0];
     for (var i: i32 = 1; i < 3; i++) {
-        dist = round_merge(dist, shapes[i], .05) * mod(i, 2) + merge(dist, shapes[i]) * mod(i + 1, 2);
+        dist = round_merge(dist, shapes[i], .05);
     }
 
     let distance_change = fwidth(dist) * 0.5;
@@ -84,6 +86,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             color = f32(dist < 0) * vec3<f32>(1.);
         }
     }
-
     return vec4<f32>(color, 1.);
+
+    // --- Noise
+    // let noiseScale = length(mouse.pos) * 10.;
+    // var col = 0.;
+    // for (var i: i32 = 1; i < 5; i++) {
+    //     let offset = (uv + (time / 10.) * vec2f(f32(i), f32(i))) * f32(10 * i);
+    //     col -= perlinNoise2(offset) / f32(i);
+    // }
+    // return vec4<f32>(abs(floor(col)), abs(floor(col)), abs(ceil(col)), 1.);
+    
+    // --- Use the provided fmod instead of % if you come from glsl.
+    // let m = vec2f(fmod(uv.x - .5, .1), fmod(uv.y - .5, .1));
+    // return vec4f(m.x, m.y, 0., 1.);
 }
