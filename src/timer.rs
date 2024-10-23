@@ -26,12 +26,9 @@ impl SimpleTimer {
             .map(|start| self.target - start.elapsed().as_millis())
     }
 
-    pub fn is_finished(&mut self) -> bool {
+    pub fn is_finished(&self) -> bool {
         match self.start {
-            Some(instant) if instant.elapsed().as_millis() > self.target => {
-                self.start = None;
-                true
-            }
+            Some(instant) if instant.elapsed().as_millis() > self.target => true,
             _ => false,
         }
     }

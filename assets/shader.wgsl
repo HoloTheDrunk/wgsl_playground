@@ -3,8 +3,13 @@
 @group(0) @binding(0)
 var<uniform> time: f32;
 
+struct Mouse {
+    pos: vec2<f32>,
+    state: u32,
+}
+
 @group(1) @binding(0)
-var<uniform> cursor: vec2<f32>;
+var<uniform> mouse: Mouse;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -38,6 +43,7 @@ fn vs_main(
 // Fragment shader
 
 //% include "sdf"
+//% include "generated/mouse_state"
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -45,15 +51,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let box_left = vec2<f32>(.5 - .15, .5);
     var shapes = array<f32, 3>(
-        disc(uv, cursor, .1),
+        disc(uv, mouse.pos, .1),
         disc(uv, box_left + vec2<f32>(.3, .1), .1),
         rectangle(uv, box_left + vec2<f32>(.15, 0), vec2<f32>(.15, .1)),
     );
     
     var dist: f32 = shapes[0];
     for (var i: i32 = 1; i < 3; i++) {
-        dist = round_merge(dist, shapes[i], .05);
-        // dist = merge(dist, shapes[i]);
+        dist = round_merge(dist, shapes[i], .05) * mod(i, 2) + merge(dist, shapes[i]) * mod(i + 1, 2);
     }
 
     let distance_change = fwidth(dist) * 0.5;
@@ -65,6 +70,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let sub_line_distance = abs(fract(dist / distance_between_sub_lines + .5) - 0.5) * distance_between_sub_lines;
     let sub_lines = smoothstep(SUB_LINE_THICKNESS - distance_change, SUB_LINE_THICKNESS + distance_change, sub_line_distance);
 
-    return vec4<f32>(min(major_lines, sub_lines) * select(OUTSIDE_COLOR, INSIDE_COLOR, dist < 0.), 1.);
-    // return f32(dist < 0) * vec4<f32>(1.);
+    let lines = min(major_lines, sub_lines);
+
+    var color: vec3<f32>;
+    switch mouse.state {
+        case Idle, default: {
+            color = lines * select(OUTSIDE_COLOR, INSIDE_COLOR, dist < 0.);
+        }
+        case Clicked: {
+            color = lines * select(INSIDE_COLOR, OUTSIDE_COLOR, dist < 0.);
+        }
+        case Held: {
+            color = f32(dist < 0) * vec3<f32>(1.);
+        }
+    }
+
+    return vec4<f32>(color, 1.);
 }

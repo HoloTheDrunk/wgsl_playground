@@ -3,6 +3,7 @@ use macros::generate_wgsl_enum;
 
 #[test]
 fn generate_wgsl_enum() {
+    #[allow(unused)]
     #[generate_wgsl_enum("test.wgsl")]
     #[derive(Debug)]
     enum MyEnum {

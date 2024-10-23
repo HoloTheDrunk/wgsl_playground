@@ -1,6 +1,7 @@
 #![allow(unused)]
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
+#![feature(let_chains)]
 
 //! # cloth_sim
 //! This simple cloth simulation engine aims to showcase a minimal example of
@@ -15,6 +16,7 @@ mod timer;
 use std::path::Path;
 
 use bytemuck::Zeroable;
+use mouse::{Mouse, MouseData, MouseUniform};
 
 use {
     model::{DrawModel, Model, Vertex},
@@ -60,13 +62,6 @@ pub trait Updateable {
     fn update(&mut self, queue: &wgpu::Queue);
 }
 
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C)]
-struct CursorUV {
-    x: f32,
-    y: f32,
-}
-
 struct State<'a> {
     surface: wgpu::Surface<'a>,
     device: wgpu::Device,
@@ -89,9 +84,7 @@ struct State<'a> {
     time_bind_group: wgpu::BindGroup,
     time_deltas_last_second: Vec<f32>,
 
-    cursor: Option<PhysicalPosition<f64>>,
-    cursor_bind_group: wgpu::BindGroup,
-    cursor_buffer: wgpu::Buffer,
+    mouse: Mouse,
 
     window: &'a Window,
 }
@@ -191,40 +184,14 @@ impl<'a> State<'a> {
             }],
         });
 
-        // Cursor uniform
-        let cursor_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Cursor Buffer"),
-            contents: bytemuck::bytes_of(&CursorUV::zeroed()),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let cursor_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Cursor Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-        let cursor_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Cursor Bind Group"),
-            layout: &cursor_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: cursor_buffer.as_entire_binding(),
-            }],
-        });
+        // Mouse
+        let mouse = Mouse::new(&device, MouseData::new(1000));
 
         // Render pipeline
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&time_bind_group_layout, &cursor_bind_group_layout],
+                bind_group_layouts: &[&time_bind_group_layout, &mouse.bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -276,9 +243,7 @@ impl<'a> State<'a> {
             time_bind_group,
             render_pipeline_layout,
             time_deltas_last_second: Vec::new(),
-            cursor: None,
-            cursor_buffer,
-            cursor_bind_group,
+            mouse,
             window,
         }
     }
@@ -393,16 +358,14 @@ impl<'a> State<'a> {
         );
         self.previous_update_time = std::time::Instant::now();
 
-        // Cursor
-        let pos = self.cursor.unwrap_or(PhysicalPosition { x: 0., y: 0. });
-        self.queue.write_buffer(
-            &self.cursor_buffer,
-            0,
-            bytemuck::cast_slice(&[CursorUV {
-                x: (pos.x / self.size.width as f64) as f32,
-                y: (pos.y / self.size.height as f64) as f32,
-            }]),
-        );
+        // Mouse
+        self.mouse.update(&self.queue);
+        let mut data = MouseUniform::from_data(&self.mouse.data).normalize(glam::Vec2::new(
+            self.size.width as f32,
+            self.size.height as f32,
+        ));
+        self.queue
+            .write_buffer(&self.mouse.buffer, 0, bytemuck::cast_slice(&[data]));
 
         // File watcher
         if self.fs_event_receiver.try_recv().is_ok() {
@@ -458,7 +421,7 @@ impl<'a> State<'a> {
             render_pass.set_pipeline(&self.render_pipeline);
 
             render_pass.set_bind_group(0, &self.time_bind_group, &[]);
-            render_pass.set_bind_group(1, &self.cursor_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.mouse.bind_group, &[]);
 
             render_pass.draw_model(&self.obj_model);
         }
@@ -507,7 +470,10 @@ fn handle_event(state: &mut State<'_>, event: Event<()>, control_flow: &EventLoo
                     device_id: _,
                     position,
                 } => {
-                    state.cursor = Some(*position);
+                    state.mouse.data.pos = *position;
+                }
+                e @ WindowEvent::MouseInput { .. } => {
+                    state.mouse.process_events(e);
                 }
                 WindowEvent::Resized(physical_size) => {
                     state.resize(*physical_size);
