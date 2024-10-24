@@ -10,6 +10,7 @@
 mod model;
 mod mouse;
 mod shader;
+mod shader_graph;
 mod texture;
 mod timer;
 

@@ -126,8 +126,8 @@ impl<'i> TryFrom<&'i Path> for Shader {
 
 #[derive(Debug, thiserror::Error)]
 pub struct ShaderError {
-    msg: Option<String>,
-    variant: ShaderErrorVariant,
+    pub msg: Option<String>,
+    pub variant: ShaderErrorVariant,
 }
 
 impl Display for ShaderError {
