@@ -119,6 +119,23 @@ impl ShaderGraph {
         Ok(graph)
     }
 
+    fn finish_dfs<'n>(
+        &self,
+        node: &'n Rc<ShaderGraphNode>,
+        visited: &mut Vec<&'n Rc<ShaderGraphNode>>,
+        target_buf: &mut String,
+    ) {
+        visited.push(node);
+
+        for dep in node.deps.iter() {
+            if !visited.iter().any(|n| Rc::ptr_eq(dep, n)) {
+                self.finish_dfs(dep, visited, target_buf);
+            }
+        }
+
+        target_buf.push_str(node.code.as_str());
+    }
+
     pub fn finish(&self) -> Result<String, ShaderError> {
         // Find last node, i.e. the only node without any dependent
         let mut last = None;
@@ -139,28 +156,9 @@ impl ShaderGraph {
             });
         };
 
-        // Add all nodes to the list in order of depth
-        let mut nodes = vec![last];
-
-        let mut index = 0;
-        while index < nodes.len() {
-            for dep in nodes[index].deps.iter() {
-                // Check if node is within the list
-                if !nodes.iter().any(|&node| Rc::ptr_eq(node, dep)) {
-                    nodes.push(dep);
-                }
-            }
-            index += 1;
-        }
-
-        // Concatenate the nodes' code starting from the the deepest ones
-        let mut shader = Vec::new();
-
-        for node in nodes.into_iter().rev() {
-            shader.push(node.code.clone());
-        }
-
-        Ok(shader.join("\n"))
+        let mut shader = String::new();
+        self.finish_dfs(last, &mut vec![], &mut shader);
+        Ok(shader)
     }
 }
 
@@ -214,7 +212,6 @@ mod test {
                 fn bar() {}
                 
                 fn foo() {}
-
 
                 fn main() {}
             "#}
