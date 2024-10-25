@@ -69,17 +69,17 @@ impl Shader {
                             );
                         }
 
-                        let sys_workdir = std::env::current_dir();
-                        let workdir = path.parent().unwrap_or(
-                            sys_workdir
-                                .as_ref()
-                                .expect("Should be valid working directory")
-                                .as_path(),
-                        );
+                        let sys_workdir = std::env::current_dir()
+                            .expect("System working directory should be valid");
+
+                        let workdir = path
+                            .parent()
+                            .map(|p| sys_workdir.join(p))
+                            .unwrap_or(sys_workdir);
 
                         let include_path = format!("{}.wgsl", &parts[1][1..(parts[1].len() - 1)]);
                         let include_path = workdir.join(include_path);
-                        let include_path = include_path.canonicalize().expect(
+                        let include_path = dbg!(&include_path).canonicalize().expect(
                             format!(
                                 "you shouldn't do weird stuff with shader paths :( ({})",
                                 include_path.to_str().unwrap()
@@ -179,7 +179,7 @@ mod test {
 
     #[test]
     fn shader_nested_include() {
-        let shader = Shader::try_from(Path::new("assets/terrain/compute.wgsl"))
+        let shader = Shader::try_from(Path::new("assets/shader.wgsl"))
             .unwrap()
             .finish();
         assert!(!shader.is_empty());

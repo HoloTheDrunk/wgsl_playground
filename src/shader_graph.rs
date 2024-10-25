@@ -55,13 +55,13 @@ impl ShaderGraph {
                     }
 
                     // --- Path resolution
-                    let sys_workdir = std::env::current_dir();
-                    let workdir = path.parent().unwrap_or(
-                        sys_workdir
-                            .as_ref()
-                            .expect("Should be valid working directory")
-                            .as_path(),
-                    );
+                    let sys_workdir =
+                        std::env::current_dir().expect("System working directory should be valid");
+
+                    let workdir = path
+                        .parent()
+                        .map(|p| sys_workdir.join(p))
+                        .unwrap_or(sys_workdir);
 
                     let mut provided_path = parts[1][1..(parts[1].len() - 1)].to_string();
                     // Add .wgsl extension if it was omitted
@@ -167,61 +167,79 @@ mod test {
     use super::*;
     use indoc::indoc;
 
+    fn run_test<S, T, C>(setup: S, test: T, cleanup: C) -> ()
+    where
+        S: FnOnce() -> (),
+        T: FnOnce() -> () + std::panic::UnwindSafe,
+        C: FnOnce() -> (),
+    {
+        setup();
+
+        let result = std::panic::catch_unwind(|| test());
+
+        cleanup();
+
+        assert!(result.is_ok())
+    }
+
     #[test]
     fn shader_graph() {
-        // Setup
-        let main = dbg!(indoc! {/*wgsl*/ r#"
-            //% include "bar"
-            //% include "foo"
+        run_test(
+            || {
+                if !Path::new("./.test_dir").is_dir() {
+                    std::fs::create_dir("./.test_dir")
+                        .expect(".test_dir/ should be successfully created");
+                }
 
-            fn main() {}
-        "#});
+                let main = indoc! {/*wgsl*/ r#"
+                    //% include "bar"
+                    //% include "foo"
 
-        let foo = dbg!(indoc! {/*wgsl*/ r#"
-            //% include "bar"
-            
-            fn foo() {}
-        "#});
+                    fn main() {}
+                "#};
 
-        let bar = dbg!(indoc! {/*wgsl*/ r#"
-            fn bar() {}
-        "#});
+                let foo = indoc! {/*wgsl*/ r#"
+                    //% include "bar"
+                    
+                    fn foo() {}
+                "#};
 
-        if !Path::new(".test_dir").is_dir() {
-            std::fs::create_dir(".test_dir").expect(".test_dir/ should be successfully created");
-        }
+                let bar = indoc! {/*wgsl*/ r#"
+                    fn bar() {}
+                "#};
 
-        std::env::set_current_dir(".test_dir");
+                std::fs::write(".test_dir/main.wgsl", main)
+                    .and_then(|_| std::fs::write(".test_dir/foo.wgsl", foo))
+                    .and_then(|_| std::fs::write(".test_dir/bar.wgsl", bar))
+                    .expect("Wgsl test files should be written to .test_dir");
+            },
+            || {
+                let graph = ShaderGraph::try_from_final(Path::new(".test_dir/main.wgsl"))
+                    .expect("Graph should be properly created");
 
-        std::fs::write("main.wgsl", main)
-            .and_then(|_| std::fs::write("foo.wgsl", foo))
-            .and_then(|_| std::fs::write("bar.wgsl", bar))
-            .expect("Wgsl test files should be written to .test_dir");
+                let code = graph
+                    .finish()
+                    .expect("Final code should be created properly");
 
-        // Logic
-        let graph = ShaderGraph::try_from_final(Path::new("main.wgsl"))
-            .expect("Graph should be properly created");
+                assert_eq!(
+                    code.trim(),
+                    indoc! {r#"
+                        fn bar() {}
+                        
+                        fn foo() {}
 
-        let code = graph
-            .finish()
-            .expect("Final code should be created properly");
-
-        assert_eq!(
-            code.trim(),
-            indoc! {r#"
-                fn bar() {}
-                
-                fn foo() {}
-
-                fn main() {}
-            "#}
-            .trim()
-        );
-
-        // Cleanup
-        std::fs::remove_file("main.wgsl")
-            .and_then(|_| std::fs::remove_file("foo.wgsl"))
-            .and_then(|_| std::fs::remove_file("bar.wgsl"))
-            .expect("Wgsl test files should be deleted");
+                        fn main() {}
+                    "#}
+                    .trim()
+                );
+            },
+            || {
+                std::fs::remove_file(".test_dir/main.wgsl")
+                    .and_then(|_| std::fs::remove_file(".test_dir/foo.wgsl"))
+                    .and_then(|_| std::fs::remove_file(".test_dir/bar.wgsl"))
+                    .expect("Wgsl test files should be deleted");
+                std::fs::remove_dir(".test_dir").expect(".test_dir should be removed");
+            },
+        )
     }
 }
