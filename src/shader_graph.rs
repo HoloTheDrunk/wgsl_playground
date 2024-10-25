@@ -6,8 +6,6 @@ use std::{
     rc::Rc,
 };
 
-use crate::shader::{Shader, ShaderError, ShaderErrorVariant};
-
 pub struct ShaderGraph {
     nodes: HashMap<PathBuf, Rc<ShaderGraphNode>>,
 }
@@ -160,6 +158,53 @@ impl ShaderGraph {
         self.finish_dfs(last, &mut vec![], &mut shader);
         Ok(shader)
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub struct ShaderError {
+    pub msg: Option<String>,
+    pub variant: ShaderErrorVariant,
+}
+
+impl Display for ShaderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "{}{}",
+            self.msg
+                .as_ref()
+                .map(|s| format!("{s}: "))
+                .unwrap_or_default(),
+            self.variant,
+        ))
+    }
+}
+
+impl<S: ToString, E: Into<ShaderErrorVariant>> From<(S, E)> for ShaderError {
+    fn from((msg, err): (S, E)) -> Self {
+        Self {
+            msg: Some(msg.to_string()),
+            variant: err.into(),
+        }
+    }
+}
+
+impl<E: Into<ShaderErrorVariant>> From<E> for ShaderError {
+    fn from(err: E) -> Self {
+        Self {
+            msg: None,
+            variant: err.into(),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ShaderErrorVariant {
+    #[error("IOError: {0:?}")]
+    /// Error when performing input/output operations like file loading
+    IO(#[from] std::io::Error),
+    #[error("PreProcessorDirectiveError")]
+    /// Error when processing preprocessor directives
+    PPD,
 }
 
 #[cfg(test)]

@@ -9,7 +9,6 @@
 
 mod model;
 mod mouse;
-mod shader;
 mod shader_graph;
 mod texture;
 mod timer;
@@ -255,9 +254,10 @@ impl<'a> State<'a> {
         shader: &Path,
         render_pipeline_layout: &wgpu::PipelineLayout,
     ) -> Result<wgpu::RenderPipeline, wgpu::CompilationInfo> {
-        let shader_code = shader::Shader::try_from(shader)
+        let shader_code = shader_graph::ShaderGraph::try_from_final(shader)
             .expect("Shader code should be available at path")
-            .finish();
+            .finish()
+            .expect("Shader code should compile successfully");
 
         device.push_error_scope(wgpu::ErrorFilter::Validation);
         let mut shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
