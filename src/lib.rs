@@ -3,9 +3,8 @@
 #![feature(generic_const_exprs)]
 #![feature(let_chains)]
 
-//! # cloth_sim
-//! This simple cloth simulation engine aims to showcase a minimal example of
-//! decent compute shader cloth simulation for educational purposes.
+//! # wgsl_playground
+//! Simple WGSL shader hot-reloading playground.
 
 mod model;
 mod mouse;
