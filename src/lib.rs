@@ -70,10 +70,13 @@ struct State<'a> {
 
     render_pipeline: wgpu::RenderPipeline,
     render_pipeline_layout: wgpu::PipelineLayout,
+    blit_pipeline: wgpu::RenderPipeline,
+    blit_pipeline_layout: wgpu::PipelineLayout,
 
     obj_model: Model,
 
-    depth_texture: Texture,
+    diffuse_texture: Texture,
+    diffuse_bind_group: wgpu::BindGroup,
 
     file_watcher: notify::RecommendedWatcher,
     fs_event_receiver: std::sync::mpsc::Receiver<()>,
@@ -151,8 +154,47 @@ impl<'a> State<'a> {
             desired_maximum_frame_latency: 2,
         };
 
-        // Depth texture
-        let depth_texture = Texture::create_depth_texture(&device, &config, "Depth Texture");
+        // FBO
+        let diffuse_texture =
+            Texture::create_diffuse_texture(&device, &config, "Diffuse Texture FBO");
+
+        let diffuse_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Texture Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Diffuse Bind Group"),
+            layout: &diffuse_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
+                },
+            ],
+        });
 
         // Time uniform
         let time_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -199,6 +241,23 @@ impl<'a> State<'a> {
             &config,
             Path::new("assets/shader.wgsl"),
             &render_pipeline_layout,
+            "Render Pipeline",
+        )
+        .expect("Shader should compile");
+
+        // Render pipeline
+        let blit_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Render Pipeline Layout"),
+            bind_group_layouts: &[&diffuse_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let blit_pipeline = Self::create_blit_pipeline(
+            &device,
+            &config,
+            Path::new("assets/blit.wgsl"),
+            &blit_pipeline_layout,
+            "Blit Pipeline",
         )
         .expect("Shader should compile");
 
@@ -232,8 +291,11 @@ impl<'a> State<'a> {
             config,
             size,
             render_pipeline,
+            blit_pipeline,
+            blit_pipeline_layout,
             obj_model,
-            depth_texture,
+            diffuse_texture,
+            diffuse_bind_group,
             file_watcher,
             fs_event_receiver: rx,
             start_time: std::time::Instant::now(),
@@ -252,6 +314,7 @@ impl<'a> State<'a> {
         config: &wgpu::SurfaceConfiguration,
         shader: &Path,
         render_pipeline_layout: &wgpu::PipelineLayout,
+        label: &str,
     ) -> Result<wgpu::RenderPipeline, wgpu::CompilationInfo> {
         let shader_code = shader_graph::ShaderGraph::try_from_final(shader)
             .expect("Shader code should be available at path")
@@ -271,7 +334,7 @@ impl<'a> State<'a> {
         Ok(
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 cache: None,
-                label: Some("Render Pipeline"),
+                label: Some(label),
                 layout: Some(render_pipeline_layout),
                 vertex: wgpu::VertexState {
                     compilation_options: Default::default(),
@@ -298,13 +361,70 @@ impl<'a> State<'a> {
                     unclipped_depth: false,
                     conservative: false,
                 },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: Texture::DEPTH_FORMAT,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+            }),
+        )
+    }
+
+    fn create_blit_pipeline(
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+        shader: &Path,
+        render_pipeline_layout: &wgpu::PipelineLayout,
+        label: &str,
+    ) -> Result<wgpu::RenderPipeline, wgpu::CompilationInfo> {
+        let shader_code = shader_graph::ShaderGraph::try_from_final(shader)
+            .expect("Shader code should be available at path")
+            .finish()
+            .expect("Shader code should compile successfully");
+
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Shader"),
+            source: wgpu::ShaderSource::Wgsl(shader_code.into()),
+        });
+        if let Some(_) = pollster::block_on(device.pop_error_scope()) {
+            let comp_info = pollster::block_on(shader.get_compilation_info());
+            return Err(comp_info);
+        }
+
+        Ok(
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                cache: None,
+                label: Some(label),
+                layout: Some(render_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    compilation_options: Default::default(),
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &[model::ModelVertex::desc()],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    compilation_options: Default::default(),
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: config.format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
                 }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: None,
                 multisample: wgpu::MultisampleState {
                     count: 1,
                     mask: !0,
@@ -326,8 +446,8 @@ impl<'a> State<'a> {
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
 
-            self.depth_texture =
-                Texture::create_depth_texture(&self.device, &self.config, "Depth Texture");
+            self.diffuse_texture =
+                Texture::create_diffuse_texture(&self.device, &self.config, "Diffuse Texture");
         }
     }
 
@@ -377,6 +497,7 @@ impl<'a> State<'a> {
                 &self.config,
                 Path::new("assets/shader.wgsl"),
                 &self.render_pipeline_layout,
+                "Render Pipeline",
             ) {
                 self.render_pipeline = new_pipeline;
             }
@@ -385,7 +506,7 @@ impl<'a> State<'a> {
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
-        let view = output
+        let output_view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -395,25 +516,20 @@ impl<'a> State<'a> {
                 label: Some("Render Encoder"),
             });
 
+        // Intermediate render
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
+                label: Some("Intermediate Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: &self.diffuse_texture.view,
+                    // view: &output_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::RED),
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_texture.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
+                depth_stencil_attachment: None,
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
@@ -422,6 +538,30 @@ impl<'a> State<'a> {
 
             render_pass.set_bind_group(0, &self.time_bind_group, &[]);
             render_pass.set_bind_group(1, &self.mouse.bind_group, &[]);
+
+            render_pass.draw_model(&self.obj_model);
+        }
+
+        // Blit
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Blit Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &output_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::RED),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            render_pass.set_pipeline(&self.blit_pipeline);
+
+            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
 
             render_pass.draw_model(&self.obj_model);
         }

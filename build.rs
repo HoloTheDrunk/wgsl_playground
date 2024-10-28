@@ -4,7 +4,7 @@ use fs_extra::dir::CopyOptions;
 use std::env;
 
 fn main() -> Result<()> {
-    // This tells Cargo to rerun this script if something in /res/ changes.
+    // This tells Cargo to rerun this script if something in /assets/ changes.
     println!("cargo:rerun-if-changed=assets/*");
 
     let out_dir = env::var("OUT_DIR")?;

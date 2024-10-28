@@ -91,8 +91,9 @@ impl Texture {
     }
 
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+    pub const DIFFUSE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 
-    pub fn create_depth_texture(
+    pub fn create_diffuse_texture(
         device: &wgpu::Device,
         config: &wgpu::SurfaceConfiguration,
         label: &str,
@@ -109,7 +110,7 @@ impl Texture {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: Self::DEPTH_FORMAT,
+            format: Self::DIFFUSE_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         };
@@ -117,7 +118,7 @@ impl Texture {
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Depth Sampler"),
+            label: Some("Diffuse Sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -126,7 +127,7 @@ impl Texture {
             mipmap_filter: wgpu::FilterMode::Nearest,
             lod_min_clamp: 0.,
             lod_max_clamp: 100.,
-            compare: Some(wgpu::CompareFunction::LessEqual),
+            compare: None,
             ..Default::default()
         });
 
