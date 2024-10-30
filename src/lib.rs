@@ -89,6 +89,9 @@ struct State<'a> {
     mouse: Mouse,
 
     window: &'a Window,
+
+    debug_buffer: wgpu::Buffer,
+    debug_buffer_used: bool,
 }
 
 impl<'a> State<'a> {
@@ -284,6 +287,15 @@ impl<'a> State<'a> {
             .watch(Path::new("assets/shader.wgsl"), RecursiveMode::NonRecursive)
             .expect("Should start watching file");
 
+        // Debug buffer
+        let debug_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Debug Buffer"),
+            size: (config.width * config.height * 4) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let debug_buffer_used = false;
+
         Self {
             surface,
             device,
@@ -296,6 +308,8 @@ impl<'a> State<'a> {
             obj_model,
             diffuse_texture,
             diffuse_bind_group,
+            debug_buffer,
+            debug_buffer_used,
             file_watcher,
             fs_event_receiver: rx,
             start_time: std::time::Instant::now(),
@@ -525,7 +539,7 @@ impl<'a> State<'a> {
                     // view: &output_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
+                        load: wgpu::LoadOp::Clear(wgpu::Color::RED),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -541,6 +555,28 @@ impl<'a> State<'a> {
 
             render_pass.draw_model(&self.obj_model);
         }
+
+        let tex = &self.diffuse_texture.texture;
+        let d_copy = tex.as_image_copy();
+        let b_copy = wgpu::ImageCopyBuffer {
+            buffer: &self.debug_buffer,
+            layout: wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: tex
+                    .format()
+                    .target_pixel_byte_cost()
+                    .map(|cost| cost * tex.width())
+                    .map(|px| px - px % 256 + 256),
+                rows_per_image: None,
+            },
+        };
+        let extent = wgpu::Extent3d {
+            width: 20,
+            height: 20,
+            depth_or_array_layers: 1,
+        };
+
+        encoder.copy_texture_to_buffer(d_copy, b_copy, extent);
 
         // Blit
         {
@@ -568,6 +604,37 @@ impl<'a> State<'a> {
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
+
+        let buffer_slice = self.debug_buffer.slice(..);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+
+        self.device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+
+        if let Ok(Ok(())) = receiver.recv() {
+            let data = buffer_slice.get_mapped_range();
+            let result = bytemuck::cast_slice::<_, [u8; 4]>(&data)
+                .iter()
+                .map(|p| [p[2], p[1], p[0], p[3]])
+                .collect::<Vec<_>>();
+
+            drop(data);
+            self.debug_buffer.unmap();
+
+            if !self.debug_buffer_used {
+                println!(
+                    "{:?}",
+                    result
+                        .iter()
+                        .filter(|px| px.iter().any(|&c| c != 0))
+                        .collect::<Vec<_>>()
+                );
+            }
+
+            self.debug_buffer_used = true;
+        } else {
+            panic!("Failed to map debug buffer!");
+        }
 
         Ok(())
     }
