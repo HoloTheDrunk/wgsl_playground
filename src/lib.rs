@@ -576,7 +576,13 @@ pub async fn run() {
     let mut state = State::new(&window).await;
 
     event_loop
-        .run(move |event, control_flow| handle_event(&mut state, event, control_flow))
+        .run(move |event, control_flow| {
+            let delta = state.previous_update_time.elapsed().as_millis();
+            if delta < 1000 / 60 {
+                std::thread::sleep(std::time::Duration::from_millis(1000 / 60 - delta as u64));
+            }
+            handle_event(&mut state, event, control_flow);
+        })
         .unwrap();
 }
 
