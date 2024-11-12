@@ -12,7 +12,9 @@ image = { version = "0.25.1", features = ["png", "jpeg"] }
 log = "0.4"
 notify = "6.1.1"
 pollster = "0.3.0"
+ron = "0.8.1"
 seq-macro = "0.3.5"
+serde = { version = "1.0.215", features = ["derive"] }
 thiserror = "1.0.61"
 tobj = { version = "4.0.2", features = ["async"] }
 wgpu = "22.1.0"

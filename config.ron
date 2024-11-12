@@ -1,0 +1,9 @@
+Config (
+    window_size: (600, 600),
+    window_title: "WGSL Playground",
+
+    fps_limit: Some(400),
+    assets_folder: "assets",
+    // Unused for now
+    // shader_names: ["shader", "blit"],
+)

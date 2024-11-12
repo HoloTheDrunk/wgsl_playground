@@ -13,12 +13,14 @@ mod timer;
 
 use std::path::Path;
 
-use bytemuck::Zeroable;
 use mouse::{Mouse, MouseData, MouseUniform};
 
+use serde::Deserialize;
 use texture::Texture;
+use winit::platform::x11::WindowBuilderExtX11;
 
 use {
+    bytemuck::Zeroable,
     notify::{
         event::{AccessKind, AccessMode},
         EventKind, RecursiveMode, Watcher,
@@ -61,8 +63,10 @@ struct State<'a> {
     surface: wgpu::Surface<'a>,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
+    surface_config: wgpu::SurfaceConfiguration,
     size: PhysicalSize<u32>,
+
+    assets_folder: std::path::PathBuf,
 
     render_pipeline: wgpu::RenderPipeline,
     render_pipeline_layout: wgpu::PipelineLayout,
@@ -89,10 +93,8 @@ struct State<'a> {
 }
 
 impl<'a> State<'a> {
-    async fn new(window: &'a Window) -> Self {
+    async fn new(window: &'a Window, config: &Config) -> Self {
         let size = window.inner_size();
-        let min_dim = size.width.min(size.height);
-        window.request_inner_size(winit::dpi::LogicalSize::new(min_dim, min_dim));
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
@@ -133,7 +135,7 @@ impl<'a> State<'a> {
             .copied()
             .expect("Surface is incompatible with adapter.");
 
-        let config = wgpu::SurfaceConfiguration {
+        let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
             width: size.width,
@@ -151,9 +153,11 @@ impl<'a> State<'a> {
             desired_maximum_frame_latency: 2,
         };
 
+        let assets_folder = Path::new(&config.assets_folder).to_path_buf();
+
         // FBO
         let diffuse_texture =
-            Texture::create_diffuse_texture(&device, &config, "Diffuse Texture FBO");
+            Texture::create_diffuse_texture(&device, &surface_config, "Diffuse Texture FBO");
 
         let diffuse_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -235,8 +239,8 @@ impl<'a> State<'a> {
 
         let render_pipeline = Self::create_render_pipeline(
             &device,
-            &config,
-            Path::new("assets/shader.wgsl"),
+            &surface_config,
+            assets_folder.join("shader.wgsl").as_path(),
             &render_pipeline_layout,
             "Render Pipeline",
         )
@@ -251,8 +255,8 @@ impl<'a> State<'a> {
 
         let blit_pipeline = Self::create_render_pipeline(
             &device,
-            &config,
-            Path::new("assets/blit.wgsl"),
+            &surface_config,
+            assets_folder.join("blit.wgsl").as_path(),
             &blit_pipeline_layout,
             "Blit Pipeline",
         )
@@ -272,13 +276,16 @@ impl<'a> State<'a> {
             })
             .expect("Should startup watcher");
         file_watcher
-            .watch(Path::new("assets/shader.wgsl"), RecursiveMode::NonRecursive)
+            .watch(
+                assets_folder.join("shader.wgsl").as_path(),
+                RecursiveMode::NonRecursive,
+            )
             .expect("Should start watching file");
 
         // Debug buffer
         let debug_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Debug Buffer"),
-            size: (config.width * config.height * 4) as u64,
+            size: (surface_config.width * surface_config.height * 4) as u64,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -288,8 +295,9 @@ impl<'a> State<'a> {
             surface,
             device,
             queue,
-            config,
+            surface_config,
             size,
+            assets_folder,
             render_pipeline,
             blit_pipeline,
             blit_pipeline_layout,
@@ -380,12 +388,15 @@ impl<'a> State<'a> {
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.size = new_size;
-            self.config.width = new_size.width;
-            self.config.height = new_size.height;
-            self.surface.configure(&self.device, &self.config);
+            self.surface_config.width = new_size.width;
+            self.surface_config.height = new_size.height;
+            self.surface.configure(&self.device, &self.surface_config);
 
-            self.diffuse_texture =
-                Texture::create_diffuse_texture(&self.device, &self.config, "Diffuse Texture");
+            self.diffuse_texture = Texture::create_diffuse_texture(
+                &self.device,
+                &self.surface_config,
+                "Diffuse Texture",
+            );
         }
     }
 
@@ -432,8 +443,8 @@ impl<'a> State<'a> {
 
             if let Ok(new_pipeline) = Self::create_render_pipeline(
                 &self.device,
-                &self.config,
-                Path::new("assets/shader.wgsl"),
+                &self.surface_config,
+                self.assets_folder.join("shader.wgsl").as_path(),
                 &self.render_pipeline_layout,
                 "Render Pipeline",
             ) {
@@ -564,22 +575,54 @@ impl<'a> State<'a> {
     }
 }
 
-pub async fn run() {
+#[derive(Deserialize)]
+pub struct Config {
+    window_size: (u32, u32),
+    window_title: String,
+
+    fps_limit: Option<u32>,
+
+    assets_folder: String,
+    // TODO: Make shader loading dynamic
+    // shader_names: Vec<String>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            window_size: (600, 600),
+            window_title: "WGSL Playground".to_string(),
+            fps_limit: Some(60),
+            assets_folder: "assets".to_string(),
+            // shader_names: vec!["shader".to_string()],
+        }
+    }
+}
+
+pub async fn run(config: Config) {
     env_logger::init();
 
     let event_loop = EventLoop::new().unwrap();
     let window = WindowBuilder::new()
-        .with_title("WGSL Playground")
+        .with_title(config.window_title.as_str())
+        .with_inner_size(PhysicalSize::new(
+            config.window_size.0,
+            config.window_size.1,
+        ))
         .build(&event_loop)
         .unwrap();
 
-    let mut state = State::new(&window).await;
+    let mut state = State::new(&window, &config).await;
 
     event_loop
         .run(move |event, control_flow| {
-            let delta = state.previous_update_time.elapsed().as_millis();
-            if delta < 1000 / 60 {
-                std::thread::sleep(std::time::Duration::from_millis(1000 / 60 - delta as u64));
+            let delta = state.previous_update_time.elapsed().as_secs_f32();
+            if let Some(fps_limit) = config.fps_limit
+                && delta < 1. / fps_limit as f32
+            {
+                std::thread::sleep(std::time::Duration::from_secs_f32(
+                    1. / fps_limit as f32 - delta,
+                ));
             }
             handle_event(&mut state, event, control_flow);
         })
