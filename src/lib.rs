@@ -6,7 +6,6 @@
 //! # wgsl_playground
 //! Simple WGSL shader hot-reloading playground.
 
-mod model;
 mod mouse;
 mod shader_graph;
 mod texture;
@@ -17,10 +16,7 @@ use std::path::Path;
 use bytemuck::Zeroable;
 use mouse::{Mouse, MouseData, MouseUniform};
 
-use {
-    model::{DrawModel, Model, Vertex},
-    texture::Texture,
-};
+use texture::Texture;
 
 use {
     notify::{
@@ -72,8 +68,6 @@ struct State<'a> {
     render_pipeline_layout: wgpu::PipelineLayout,
     blit_pipeline: wgpu::RenderPipeline,
     blit_pipeline_layout: wgpu::PipelineLayout,
-
-    obj_model: Model,
 
     diffuse_texture: Texture,
     diffuse_bind_group: wgpu::BindGroup,
@@ -264,12 +258,6 @@ impl<'a> State<'a> {
         )
         .expect("Shader should compile");
 
-        // Model
-        let obj_model = match Model::from_file("plane.obj", &device, &queue).await {
-            Ok(v) => v,
-            Err(e) => panic!("{e:?}"),
-        };
-
         // File Watcher
         let (tx, rx) = std::sync::mpsc::channel();
         let mut file_watcher =
@@ -305,7 +293,6 @@ impl<'a> State<'a> {
             render_pipeline,
             blit_pipeline,
             blit_pipeline_layout,
-            obj_model,
             diffuse_texture,
             diffuse_bind_group,
             debug_buffer,
@@ -354,7 +341,7 @@ impl<'a> State<'a> {
                     compilation_options: Default::default(),
                     module: &shader,
                     entry_point: "vs_main",
-                    buffers: &[model::ModelVertex::desc()],
+                    buffers: &[],
                 },
                 fragment: Some(wgpu::FragmentState {
                     compilation_options: Default::default(),
@@ -417,7 +404,8 @@ impl<'a> State<'a> {
                     compilation_options: Default::default(),
                     module: &shader,
                     entry_point: "vs_main",
-                    buffers: &[model::ModelVertex::desc()],
+                    // buffers: &[model::ModelVertex::desc()],
+                    buffers: &[],
                 },
                 fragment: Some(wgpu::FragmentState {
                     compilation_options: Default::default(),
@@ -535,8 +523,8 @@ impl<'a> State<'a> {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Intermediate Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.diffuse_texture.view,
-                    // view: &output_view,
+                    // view: &self.diffuse_texture.view,
+                    view: &output_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::RED),
@@ -553,88 +541,89 @@ impl<'a> State<'a> {
             render_pass.set_bind_group(0, &self.time_bind_group, &[]);
             render_pass.set_bind_group(1, &self.mouse.bind_group, &[]);
 
-            render_pass.draw_model(&self.obj_model);
+            render_pass.draw(0..3, 0..1);
+            // render_pass.draw_model(&self.obj_model);
         }
 
-        let tex = &self.diffuse_texture.texture;
-        let d_copy = tex.as_image_copy();
-        let b_copy = wgpu::ImageCopyBuffer {
-            buffer: &self.debug_buffer,
-            layout: wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: tex
-                    .format()
-                    .target_pixel_byte_cost()
-                    .map(|cost| cost * tex.width())
-                    .map(|px| px - px % 256 + 256),
-                rows_per_image: None,
-            },
-        };
-        let extent = wgpu::Extent3d {
-            width: 20,
-            height: 20,
-            depth_or_array_layers: 1,
-        };
-
-        encoder.copy_texture_to_buffer(d_copy, b_copy, extent);
-
-        // Blit
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Blit Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &output_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::RED),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
-
-            render_pass.set_pipeline(&self.blit_pipeline);
-
-            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
-
-            render_pass.draw_model(&self.obj_model);
-        }
+        // let tex = &self.diffuse_texture.texture;
+        // let d_copy = tex.as_image_copy();
+        // let b_copy = wgpu::ImageCopyBuffer {
+        //     buffer: &self.debug_buffer,
+        //     layout: wgpu::ImageDataLayout {
+        //         offset: 0,
+        //         bytes_per_row: tex
+        //             .format()
+        //             .target_pixel_byte_cost()
+        //             .map(|cost| cost * tex.width())
+        //             .map(|px| px - px % 256 + 256),
+        //         rows_per_image: None,
+        //     },
+        // };
+        // let extent = wgpu::Extent3d {
+        //     width: 20,
+        //     height: 20,
+        //     depth_or_array_layers: 1,
+        // };
+        //
+        // encoder.copy_texture_to_buffer(d_copy, b_copy, extent);
+        //
+        // // Blit
+        // {
+        //     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        //         label: Some("Blit Pass"),
+        //         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+        //             view: &output_view,
+        //             resolve_target: None,
+        //             ops: wgpu::Operations {
+        //                 load: wgpu::LoadOp::Clear(wgpu::Color::RED),
+        //                 store: wgpu::StoreOp::Store,
+        //             },
+        //         })],
+        //         depth_stencil_attachment: None,
+        //         occlusion_query_set: None,
+        //         timestamp_writes: None,
+        //     });
+        //
+        //     render_pass.set_pipeline(&self.blit_pipeline);
+        //
+        //     render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+        //
+        //     render_pass.draw(0..3, 0..1);
+        // }
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
-        let buffer_slice = self.debug_buffer.slice(..);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
-
-        self.device.poll(wgpu::Maintain::wait()).panic_on_timeout();
-
-        if let Ok(Ok(())) = receiver.recv() {
-            let data = buffer_slice.get_mapped_range();
-            let result = bytemuck::cast_slice::<_, [u8; 4]>(&data)
-                .iter()
-                .map(|p| [p[2], p[1], p[0], p[3]])
-                .collect::<Vec<_>>();
-
-            drop(data);
-            self.debug_buffer.unmap();
-
-            if !self.debug_buffer_used {
-                println!(
-                    "{:?}",
-                    result
-                        .iter()
-                        .filter(|px| px.iter().any(|&c| c != 0))
-                        .collect::<Vec<_>>()
-                );
-            }
-
-            self.debug_buffer_used = true;
-        } else {
-            panic!("Failed to map debug buffer!");
-        }
+        // let buffer_slice = self.debug_buffer.slice(..);
+        // let (sender, receiver) = std::sync::mpsc::channel();
+        // buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+        //
+        // self.device.poll(wgpu::Maintain::wait()).panic_on_timeout();
+        //
+        // if let Ok(Ok(())) = receiver.recv() {
+        //     let data = buffer_slice.get_mapped_range();
+        //     let result = bytemuck::cast_slice::<_, [u8; 4]>(&data)
+        //         .iter()
+        //         .map(|p| [p[2], p[1], p[0], p[3]])
+        //         .collect::<Vec<_>>();
+        //
+        //     drop(data);
+        //     self.debug_buffer.unmap();
+        //
+        //     if !self.debug_buffer_used {
+        //         println!(
+        //             "{:?}",
+        //             result
+        //                 .iter()
+        //                 .filter(|px| px.iter().any(|&c| c != 0))
+        //                 .collect::<Vec<_>>()
+        //         );
+        //     }
+        //
+        //     self.debug_buffer_used = true;
+        // } else {
+        //     panic!("Failed to map debug buffer!");
+        // }
 
         Ok(())
     }
@@ -673,14 +662,8 @@ fn handle_event(state: &mut State<'_>, event: Event<()>, control_flow: &EventLoo
                         },
                     ..
                 } => control_flow.exit(),
-                WindowEvent::CursorMoved {
-                    device_id: _,
-                    position,
-                } => {
-                    state.mouse.data.pos = *position;
-                }
-                e @ WindowEvent::MouseInput { .. } => {
-                    state.mouse.process_events(e);
+                WindowEvent::MouseInput { .. } | WindowEvent::CursorMoved { .. } => {
+                    state.mouse.process_events(event);
                 }
                 WindowEvent::Resized(physical_size) => {
                     state.resize(*physical_size);

@@ -71,6 +71,10 @@ impl MouseData {
 impl InputEventProcessor for MouseData {
     fn process_events(&mut self, event: &WindowEvent) -> bool {
         let WindowEvent::MouseInput { state, button, .. } = event else {
+            if let WindowEvent::CursorMoved { position, .. } = event {
+                self.pos = *position;
+                return true;
+            }
             return false;
         };
 
