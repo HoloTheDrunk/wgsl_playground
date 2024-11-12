@@ -249,7 +249,7 @@ impl<'a> State<'a> {
             push_constant_ranges: &[],
         });
 
-        let blit_pipeline = Self::create_blit_pipeline(
+        let blit_pipeline = Self::create_render_pipeline(
             &device,
             &config,
             Path::new("assets/blit.wgsl"),
@@ -373,70 +373,6 @@ impl<'a> State<'a> {
         )
     }
 
-    fn create_blit_pipeline(
-        device: &wgpu::Device,
-        config: &wgpu::SurfaceConfiguration,
-        shader: &Path,
-        render_pipeline_layout: &wgpu::PipelineLayout,
-        label: &str,
-    ) -> Result<wgpu::RenderPipeline, wgpu::CompilationInfo> {
-        let shader_code = shader_graph::ShaderGraph::try_from_final(shader)
-            .expect("Shader code should be available at path")
-            .finish()
-            .expect("Shader code should compile successfully");
-
-        device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let mut shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(shader_code.into()),
-        });
-        if let Some(_) = pollster::block_on(device.pop_error_scope()) {
-            let comp_info = pollster::block_on(shader.get_compilation_info());
-            return Err(comp_info);
-        }
-
-        Ok(
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                cache: None,
-                label: Some(label),
-                layout: Some(render_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    compilation_options: Default::default(),
-                    module: &shader,
-                    entry_point: "vs_main",
-                    // buffers: &[model::ModelVertex::desc()],
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    compilation_options: Default::default(),
-                    module: &shader,
-                    entry_point: "fs_main",
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: config.format,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    unclipped_depth: false,
-                    conservative: false,
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState {
-                    count: 1,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-            }),
-        )
-    }
-
     pub fn window(&self) -> &Window {
         self.window
     }
@@ -523,8 +459,8 @@ impl<'a> State<'a> {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Intermediate Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    // view: &self.diffuse_texture.view,
-                    view: &output_view,
+                    view: &self.diffuse_texture.view,
+                    // view: &output_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::RED),
@@ -542,7 +478,6 @@ impl<'a> State<'a> {
             render_pass.set_bind_group(1, &self.mouse.bind_group, &[]);
 
             render_pass.draw(0..3, 0..1);
-            // render_pass.draw_model(&self.obj_model);
         }
 
         // let tex = &self.diffuse_texture.texture;
@@ -566,30 +501,30 @@ impl<'a> State<'a> {
         // };
         //
         // encoder.copy_texture_to_buffer(d_copy, b_copy, extent);
-        //
-        // // Blit
-        // {
-        //     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        //         label: Some("Blit Pass"),
-        //         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-        //             view: &output_view,
-        //             resolve_target: None,
-        //             ops: wgpu::Operations {
-        //                 load: wgpu::LoadOp::Clear(wgpu::Color::RED),
-        //                 store: wgpu::StoreOp::Store,
-        //             },
-        //         })],
-        //         depth_stencil_attachment: None,
-        //         occlusion_query_set: None,
-        //         timestamp_writes: None,
-        //     });
-        //
-        //     render_pass.set_pipeline(&self.blit_pipeline);
-        //
-        //     render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
-        //
-        //     render_pass.draw(0..3, 0..1);
-        // }
+
+        // Blit
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Blit Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &output_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::RED),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            render_pass.set_pipeline(&self.blit_pipeline);
+
+            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+
+            render_pass.draw(0..3, 0..1);
+        }
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
