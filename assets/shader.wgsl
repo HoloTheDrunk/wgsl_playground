@@ -81,14 +81,10 @@ const DISTORTION_FACTOR: f32 = 0.0025;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // var uv = vec2f(in.tex_coords.x, in.tex_coords.y);
-    //
-    // uv.x += DISTORTION_FACTOR * perlin_octaves(uv, 5);
-    // uv.y += DISTORTION_FACTOR * perlin_octaves(uv, 5);
-    // 
-    // return sdf_example(uv);
-    if distance(in.tex_coords, mouse.pos) < .1 {
-        return vec4<f32>(1., 0., 0., 1.);
-    }
-    return vec4f(in.tex_coords.x, in.tex_coords.y, 0., 1.);
+    var uv = vec2f(in.tex_coords.x, in.tex_coords.y);
+
+    uv.x += DISTORTION_FACTOR * perlin_octaves(uv, 5);
+    uv.y += DISTORTION_FACTOR * perlin_octaves(uv, 5);
+
+    return sdf_example(uv);
 }

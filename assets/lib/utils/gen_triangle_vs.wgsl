@@ -9,8 +9,8 @@ fn vs_main(
 ) -> VertexOutput {
     var out: VertexOutput;
 
-    out.tex_coords = vec2f(f32((in_vertex_index << 1) & 2), f32(in_vertex_index & 2));
-    out.clip_position = vec4f(2 * out.tex_coords - 1, 0, 1);
+    out.tex_coords = vec2f(f32(in_vertex_index & 2), f32((in_vertex_index << 1) & 2));
+    out.clip_position = vec4f(vec2f(2, -2) * out.tex_coords + vec2f(-1, 1), 0, 1);
 
     return out;
 }

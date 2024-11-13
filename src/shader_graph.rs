@@ -12,7 +12,8 @@ pub struct ShaderGraph {
 
 pub struct ShaderGraphNode {
     deps: Vec<Rc<ShaderGraphNode>>,
-    code: String,
+    pub path: PathBuf,
+    pub code: String,
 }
 
 impl ShaderGraph {
@@ -101,7 +102,11 @@ impl ShaderGraph {
             line_number += 1;
         }
 
-        let node = Rc::new(ShaderGraphNode { deps, code });
+        let node = Rc::new(ShaderGraphNode {
+            deps,
+            code,
+            path: path.to_path_buf(),
+        });
         self.nodes.insert(canon_path, node.clone());
 
         Ok(node)
@@ -158,6 +163,26 @@ impl ShaderGraph {
         self.finish_dfs(last, &mut vec![], &mut shader);
         Ok(shader)
     }
+
+    pub fn last(&self) -> Option<&Rc<ShaderGraphNode>> {
+        // Find last node, i.e. the only node without any dependent
+        let mut last = None;
+        for node in self.nodes.values() {
+            if !self
+                .nodes
+                .values()
+                .any(|n| n.deps.iter().any(|dep| Rc::ptr_eq(dep, node)))
+            {
+                last = Some(node);
+            }
+        }
+
+        return last;
+    }
+
+    pub fn paths(&self) -> impl Iterator<Item = &Path> {
+        self.nodes.keys().map(PathBuf::as_path)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -199,6 +224,9 @@ impl<E: Into<ShaderErrorVariant>> From<E> for ShaderError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ShaderErrorVariant {
+    #[error("InvalidState: {0:?}")]
+    /// Error when the state of the shader_graph is invalid
+    InvalidState(String),
     #[error("IOError: {0:?}")]
     /// Error when performing input/output operations like file loading
     IO(#[from] std::io::Error),

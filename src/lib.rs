@@ -59,7 +59,174 @@ pub trait Updateable {
     fn update(&mut self, queue: &wgpu::Queue);
 }
 
+struct Pipeline {
+    shader: shader_graph::ShaderGraph,
+    pipeline: wgpu::RenderPipeline,
+    layout: wgpu::PipelineLayout,
+}
+
+struct TextureBind {
+    texture: Texture,
+    bind_group_layout: wgpu::BindGroupLayout,
+    bind_group: wgpu::BindGroup,
+}
+impl TextureBind {
+    fn new(
+        device: &wgpu::Device,
+        surface_config: &wgpu::SurfaceConfiguration,
+        label: &str,
+    ) -> Self {
+        let texture = Texture::create_diffuse_texture(&device, &surface_config, label);
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Texture Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Diffuse Bind Group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&texture.sampler),
+                },
+            ],
+        });
+
+        Self {
+            texture,
+            bind_group_layout,
+            bind_group,
+        }
+    }
+}
+
+struct TexturePair(TextureBind, TextureBind, bool);
+impl TexturePair {
+    fn new(device: &wgpu::Device, surface_config: &wgpu::SurfaceConfiguration) -> Self {
+        let mut textures = ["First TexturePair FBO", "Second TexturePair FBO"]
+            .iter()
+            .map(|label| TextureBind::new(device, surface_config, label));
+        TexturePair(textures.next().unwrap(), textures.next().unwrap(), false)
+    }
+
+    fn swap(&mut self) {
+        self.2 = !self.2;
+    }
+
+    fn get(&self) -> (&TextureBind, &TextureBind) {
+        if self.2 {
+            (&self.0, &self.1)
+        } else {
+            (&self.1, &self.0)
+        }
+    }
+}
+
+struct FileWatcher {
+    watcher: notify::RecommendedWatcher,
+    event_receiver: std::sync::mpsc::Receiver<()>,
+}
+
+impl FileWatcher {
+    fn init() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if let Ok(notify::Event {
+                kind: EventKind::Access(AccessKind::Close(AccessMode::Write)),
+                ..
+            }) = res
+            {
+                tx.send(()).unwrap();
+            }
+        })
+        .expect("Should init watcher");
+
+        Self {
+            watcher,
+            event_receiver: rx,
+        }
+    }
+
+    fn watch(&mut self, path: &Path) {
+        self.watcher
+            .watch(path, RecursiveMode::NonRecursive)
+            .expect("Should start watching file");
+    }
+}
+
+struct SceneTime {
+    start: std::time::Instant,
+    previous_update: std::time::Instant,
+
+    buffer: wgpu::Buffer,
+    bind_group_layout: wgpu::BindGroupLayout,
+    bind_group: wgpu::BindGroup,
+    deltas_last_second: Vec<f32>,
+}
+
+impl SceneTime {
+    fn new(device: &wgpu::Device) -> Self {
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Time Buffer"),
+            contents: bytemuck::cast_slice(&[0.0f32]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Time Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Time Bind Group"),
+            layout: &bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+
+        Self {
+            start: std::time::Instant::now(),
+            previous_update: std::time::Instant::now(),
+            buffer,
+            bind_group_layout,
+            bind_group,
+            deltas_last_second: Vec::new(),
+        }
+    }
+}
+
 struct State<'a> {
+    window: &'a Window,
     surface: wgpu::Surface<'a>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -68,29 +235,15 @@ struct State<'a> {
 
     assets_folder: std::path::PathBuf,
 
-    render_pipeline: wgpu::RenderPipeline,
-    render_pipeline_layout: wgpu::PipelineLayout,
-    blit_pipeline: wgpu::RenderPipeline,
-    blit_pipeline_layout: wgpu::PipelineLayout,
+    render_pipeline: Pipeline,
+    blit_pipeline: Pipeline,
 
-    diffuse_texture: Texture,
-    diffuse_bind_group_layout: wgpu::BindGroupLayout,
-    diffuse_bind_group: wgpu::BindGroup,
+    texture_pair: TexturePair,
 
-    file_watcher: notify::RecommendedWatcher,
-    fs_event_receiver: std::sync::mpsc::Receiver<()>,
-    start_time: std::time::Instant,
-    previous_update_time: std::time::Instant,
-    time_buffer: wgpu::Buffer,
-    time_bind_group: wgpu::BindGroup,
-    time_deltas_last_second: Vec<f32>,
+    file_watcher: FileWatcher,
 
+    time: SceneTime,
     mouse: Mouse,
-
-    window: &'a Window,
-
-    debug_buffer: wgpu::Buffer,
-    debug_buffer_used: bool,
 }
 
 impl<'a> State<'a> {
@@ -156,143 +309,70 @@ impl<'a> State<'a> {
 
         let assets_folder = Path::new(&config.assets_folder).to_path_buf();
 
-        // FBO
-        let diffuse_texture =
-            Texture::create_diffuse_texture(&device, &surface_config, "Diffuse Texture FBO");
-
-        let diffuse_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Texture Bind Group Layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-
-        let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Diffuse Bind Group"),
-            layout: &diffuse_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
-                },
-            ],
-        });
+        // FBOs
+        let texture_pair = TexturePair::new(&device, &surface_config);
 
         // Time uniform
-        let time_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Time Buffer"),
-            contents: bytemuck::cast_slice(&[0.0f32]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let time_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Time Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-        let time_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Time Bind Group"),
-            layout: &time_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: time_buffer.as_entire_binding(),
-            }],
-        });
+        let time = SceneTime::new(&device);
 
         // Mouse
         let mouse = Mouse::new(&device, MouseData::new(1000));
 
         // Render pipeline
+        let render_pipeline_shader =
+            shader_graph::ShaderGraph::try_from_final(assets_folder.join("shader.wgsl").as_path())
+                .expect("Shader code should be available at path");
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&time_bind_group_layout, &mouse.bind_group_layout],
+                bind_group_layouts: &[&time.bind_group_layout, &mouse.bind_group_layout],
                 push_constant_ranges: &[],
             });
-
-        let render_pipeline = Self::create_render_pipeline(
-            &device,
-            &surface_config,
-            assets_folder.join("shader.wgsl").as_path(),
-            &render_pipeline_layout,
-            "Render Pipeline",
-        )
-        .expect("Shader should compile");
+        let render_pipeline = Pipeline {
+            pipeline: Self::create_render_pipeline(
+                &device,
+                &surface_config,
+                &render_pipeline_shader,
+                &render_pipeline_layout,
+                "Render Pipeline",
+            )
+            .expect("Shader should compile"),
+            shader: render_pipeline_shader,
+            layout: render_pipeline_layout,
+        };
 
         // Render pipeline
+        let blit_pipeline_shader =
+            shader_graph::ShaderGraph::try_from_final(assets_folder.join("blit.wgsl").as_path())
+                .expect("Shader code should be available at path");
         let blit_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&diffuse_bind_group_layout],
+            bind_group_layouts: &[&texture_pair.get().0.bind_group_layout],
             push_constant_ranges: &[],
         });
 
-        let blit_pipeline = Self::create_render_pipeline(
-            &device,
-            &surface_config,
-            assets_folder.join("blit.wgsl").as_path(),
-            &blit_pipeline_layout,
-            "Blit Pipeline",
-        )
-        .expect("Shader should compile");
+        let blit_pipeline = Pipeline {
+            pipeline: Self::create_render_pipeline(
+                &device,
+                &surface_config,
+                &blit_pipeline_shader,
+                &blit_pipeline_layout,
+                "Blit Pipeline",
+            )
+            .expect("Shader should compile"),
+            shader: blit_pipeline_shader,
+            layout: blit_pipeline_layout,
+        };
 
         // File Watcher
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut file_watcher =
-            notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                if let Ok(notify::Event {
-                    kind: EventKind::Access(AccessKind::Close(AccessMode::Write)),
-                    ..
-                }) = res
-                {
-                    tx.send(()).unwrap();
-                }
-            })
-            .expect("Should startup watcher");
-        file_watcher
-            .watch(
-                assets_folder.join("shader.wgsl").as_path(),
-                RecursiveMode::NonRecursive,
-            )
-            .expect("Should start watching file");
-
-        // Debug buffer
-        let debug_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Debug Buffer"),
-            size: (surface_config.width * surface_config.height * 4) as u64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let debug_buffer_used = false;
+        let mut file_watcher = FileWatcher::init();
+        for path in render_pipeline.shader.paths() {
+            file_watcher.watch(path);
+        }
+        file_watcher.watch(assets_folder.join("blit.wgsl").as_path());
 
         Self {
+            window,
             surface,
             device,
             queue,
@@ -301,34 +381,21 @@ impl<'a> State<'a> {
             assets_folder,
             render_pipeline,
             blit_pipeline,
-            blit_pipeline_layout,
-            diffuse_texture,
-            diffuse_bind_group_layout,
-            diffuse_bind_group,
-            debug_buffer,
-            debug_buffer_used,
+            texture_pair,
             file_watcher,
-            fs_event_receiver: rx,
-            start_time: std::time::Instant::now(),
-            previous_update_time: std::time::Instant::now(),
-            time_buffer,
-            time_bind_group,
-            render_pipeline_layout,
-            time_deltas_last_second: Vec::new(),
+            time,
             mouse,
-            window,
         }
     }
 
     fn create_render_pipeline(
         device: &wgpu::Device,
         config: &wgpu::SurfaceConfiguration,
-        shader: &Path,
+        shader_graph: &shader_graph::ShaderGraph,
         render_pipeline_layout: &wgpu::PipelineLayout,
         label: &str,
     ) -> Result<wgpu::RenderPipeline, wgpu::CompilationInfo> {
-        let shader_code = shader_graph::ShaderGraph::try_from_final(shader)
-            .expect("Shader code should be available at path")
+        let shader_code = shader_graph
             .finish()
             .expect("Shader code should compile successfully");
 
@@ -346,7 +413,7 @@ impl<'a> State<'a> {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 cache: None,
                 label: Some(label),
-                layout: Some(render_pipeline_layout),
+                layout: Some(&render_pipeline_layout),
                 vertex: wgpu::VertexState {
                     compilation_options: Default::default(),
                     module: &shader,
@@ -394,25 +461,7 @@ impl<'a> State<'a> {
             self.surface_config.height = new_size.height;
             self.surface.configure(&self.device, &self.surface_config);
 
-            self.diffuse_texture = Texture::create_diffuse_texture(
-                &self.device,
-                &self.surface_config,
-                "Diffuse Texture",
-            );
-            self.diffuse_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Diffuse Bind Group"),
-                layout: &self.diffuse_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&self.diffuse_texture.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.diffuse_texture.sampler),
-                    },
-                ],
-            });
+            self.texture_pair = TexturePair::new(&self.device, &self.surface_config);
         }
     }
 
@@ -421,27 +470,27 @@ impl<'a> State<'a> {
     }
 
     fn update(&mut self) {
-        let delta_time = self.previous_update_time.elapsed().as_secs_f32();
+        let delta_time = self.time.previous_update.elapsed().as_secs_f32();
 
         // FPS logging
-        self.time_deltas_last_second.push(delta_time);
-        let sum_deltas = self.time_deltas_last_second.iter().sum::<f32>();
+        self.time.deltas_last_second.push(delta_time);
+        let sum_deltas = self.time.deltas_last_second.iter().sum::<f32>();
         if sum_deltas > 1. {
-            let deltas = self.time_deltas_last_second.len();
+            let deltas = self.time.deltas_last_second.len();
             println!(
                 "fps: {} ({deltas} / {sum_deltas})",
                 deltas as f32 / sum_deltas,
             );
-            self.time_deltas_last_second.clear();
+            self.time.deltas_last_second.clear();
         }
 
         // Time
         self.queue.write_buffer(
-            &self.time_buffer,
+            &self.time.buffer,
             0,
-            bytemuck::cast_slice(&[self.start_time.elapsed().as_secs_f32()]),
+            bytemuck::cast_slice(&[self.time.start.elapsed().as_secs_f32()]),
         );
-        self.previous_update_time = std::time::Instant::now();
+        self.time.previous_update = std::time::Instant::now();
 
         // Mouse
         self.mouse.update(&self.queue);
@@ -453,18 +502,26 @@ impl<'a> State<'a> {
             .write_buffer(&self.mouse.buffer, 0, bytemuck::cast_slice(&[data]));
 
         // File watcher
-        if self.fs_event_receiver.try_recv().is_ok() {
+        if self.file_watcher.event_receiver.try_recv().is_ok() {
             // Drain channel
-            while let Ok(_) = self.fs_event_receiver.try_recv() {}
+            while let Ok(_) = self.file_watcher.event_receiver.try_recv() {}
+
+            let shader = self
+                .render_pipeline
+                .shader
+                .last()
+                .map(|last| shader_graph::ShaderGraph::try_from_final(last.path.as_path()))
+                .expect("Shader should have at least one node at this point")
+                .expect("Shader graph should be possible to build");
 
             if let Ok(new_pipeline) = Self::create_render_pipeline(
                 &self.device,
                 &self.surface_config,
-                self.assets_folder.join("shader.wgsl").as_path(),
-                &self.render_pipeline_layout,
+                &shader,
+                &self.render_pipeline.layout,
                 "Render Pipeline",
             ) {
-                self.render_pipeline = new_pipeline;
+                self.render_pipeline.pipeline = new_pipeline;
             }
         }
     }
@@ -486,8 +543,7 @@ impl<'a> State<'a> {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Intermediate Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.diffuse_texture.view,
-                    // view: &output_view,
+                    view: &self.texture_pair.get().1.texture.view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::RED),
@@ -499,35 +555,15 @@ impl<'a> State<'a> {
                 timestamp_writes: None,
             });
 
-            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_pipeline(&self.render_pipeline.pipeline);
 
-            render_pass.set_bind_group(0, &self.time_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.time.bind_group, &[]);
             render_pass.set_bind_group(1, &self.mouse.bind_group, &[]);
 
             render_pass.draw(0..3, 0..1);
         }
 
-        // let tex = &self.diffuse_texture.texture;
-        // let d_copy = tex.as_image_copy();
-        // let b_copy = wgpu::ImageCopyBuffer {
-        //     buffer: &self.debug_buffer,
-        //     layout: wgpu::ImageDataLayout {
-        //         offset: 0,
-        //         bytes_per_row: tex
-        //             .format()
-        //             .target_pixel_byte_cost()
-        //             .map(|cost| cost * tex.width())
-        //             .map(|px| px - px % 256 + 256),
-        //         rows_per_image: None,
-        //     },
-        // };
-        // let extent = wgpu::Extent3d {
-        //     width: 20,
-        //     height: 20,
-        //     depth_or_array_layers: 1,
-        // };
-        //
-        // encoder.copy_texture_to_buffer(d_copy, b_copy, extent);
+        self.texture_pair.swap();
 
         // Blit
         {
@@ -546,46 +582,15 @@ impl<'a> State<'a> {
                 timestamp_writes: None,
             });
 
-            render_pass.set_pipeline(&self.blit_pipeline);
+            render_pass.set_pipeline(&self.blit_pipeline.pipeline);
 
-            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.texture_pair.0.bind_group, &[]);
 
             render_pass.draw(0..3, 0..1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
-
-        // let buffer_slice = self.debug_buffer.slice(..);
-        // let (sender, receiver) = std::sync::mpsc::channel();
-        // buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
-        //
-        // self.device.poll(wgpu::Maintain::wait()).panic_on_timeout();
-        //
-        // if let Ok(Ok(())) = receiver.recv() {
-        //     let data = buffer_slice.get_mapped_range();
-        //     let result = bytemuck::cast_slice::<_, [u8; 4]>(&data)
-        //         .iter()
-        //         .map(|p| [p[2], p[1], p[0], p[3]])
-        //         .collect::<Vec<_>>();
-        //
-        //     drop(data);
-        //     self.debug_buffer.unmap();
-        //
-        //     if !self.debug_buffer_used {
-        //         println!(
-        //             "{:?}",
-        //             result
-        //                 .iter()
-        //                 .filter(|px| px.iter().any(|&c| c != 0))
-        //                 .collect::<Vec<_>>()
-        //         );
-        //     }
-        //
-        //     self.debug_buffer_used = true;
-        // } else {
-        //     panic!("Failed to map debug buffer!");
-        // }
 
         Ok(())
     }
@@ -632,7 +637,7 @@ pub async fn run(config: Config) {
 
     event_loop
         .run(move |event, control_flow| {
-            let delta = state.previous_update_time.elapsed().as_secs_f32();
+            let delta = state.time.previous_update.elapsed().as_secs_f32();
             if let Some(fps_limit) = config.fps_limit
                 && delta < 1. / fps_limit as f32
             {

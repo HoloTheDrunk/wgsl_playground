@@ -170,8 +170,7 @@ impl MouseUniform {
         Self {
             pos: glam::Vec2::new(
                 data.pos.x as f32 / size.x as f32,
-                // Flipping y to match the coordinate system of the shader
-                1. - data.pos.y as f32 / size.y as f32,
+                data.pos.y as f32 / size.y as f32,
             ),
             state: match data.state {
                 MouseState::Idle => 0,
