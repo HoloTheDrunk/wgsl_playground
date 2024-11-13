@@ -15,7 +15,7 @@ use {
 
 pub struct Mouse {
     pub data: MouseData,
-    pub uniform: MouseUniform,
+    pub uniform: Option<MouseUniform>,
     pub buffer: wgpu::Buffer,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub bind_group: wgpu::BindGroup,
@@ -110,35 +110,18 @@ pub enum MouseState {
     Held(MouseButton),
 }
 
-impl GpuBuffer<MouseUniform> for Mouse {
+impl GpuBuffer<Option<MouseUniform>> for Mouse {
     type Init = MouseData;
 
-    fn init_buffer(device: &wgpu::Device, data: &Self::Init) -> GpuBufferData<MouseUniform> {
-        // let uniform = CameraUniform::from_config(config);
-        let uniform = MouseUniform::from_data(data);
-        // let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        //     label: Some("Camera Buffer"),
-        //     contents: bytemuck::cast_slice(&[uniform]),
-        //     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        // });
+    fn init_buffer(
+        device: &wgpu::Device,
+        data: &Self::Init,
+    ) -> GpuBufferData<Option<MouseUniform>> {
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Mouse Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[uniform]),
+            contents: bytemuck::cast_slice(&[MouseUniform::default()]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        // let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        //     label: Some("Camera Bind Group Layout"),
-        //     entries: &[wgpu::BindGroupLayoutEntry {
-        //         binding: 0,
-        //         visibility: wgpu::ShaderStages::VERTEX,
-        //         ty: wgpu::BindingType::Buffer {
-        //             ty: wgpu::BufferBindingType::Uniform,
-        //             has_dynamic_offset: false,
-        //             min_binding_size: None,
-        //         },
-        //         count: None,
-        //     }],
-        // });
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Mouse Uniform Bind Group Layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -152,14 +135,6 @@ impl GpuBuffer<MouseUniform> for Mouse {
                 count: None,
             }],
         });
-        // let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        //     label: Some("Camera Bind Group"),
-        //     layout: &bind_group_layout,
-        //     entries: &[wgpu::BindGroupEntry {
-        //         binding: 0,
-        //         resource: buffer.as_entire_binding(),
-        //     }],
-        // });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Mouse Uniform Bind Group"),
             layout: &bind_group_layout,
@@ -170,7 +145,7 @@ impl GpuBuffer<MouseUniform> for Mouse {
         });
 
         GpuBufferData {
-            data: uniform,
+            data: None,
             buffer,
             bind_group_layout,
             bind_group,
@@ -182,7 +157,7 @@ impl GpuBuffer<MouseUniform> for Mouse {
     }
 }
 
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Default, Pod, Zeroable)]
 #[repr(C, align(16))]
 pub struct MouseUniform {
     pub pos: glam::Vec2,
@@ -191,9 +166,13 @@ pub struct MouseUniform {
 }
 
 impl MouseUniform {
-    pub fn from_data(data: &MouseData) -> Self {
+    pub fn new(data: &MouseData, size: glam::Vec2) -> Self {
         Self {
-            pos: glam::Vec2::new(data.pos.x as f32, data.pos.y as f32),
+            pos: glam::Vec2::new(
+                data.pos.x as f32 / size.x as f32,
+                // Flipping y to match the coordinate system of the shader
+                1. - data.pos.y as f32 / size.y as f32,
+            ),
             state: match data.state {
                 MouseState::Idle => 0,
                 MouseState::Clicked(_) => 1,
@@ -201,11 +180,5 @@ impl MouseUniform {
             },
             _padding: 0,
         }
-    }
-
-    pub fn normalize(mut self, size: glam::Vec2) -> Self {
-        self.pos.x = self.pos.x / size.x as f32;
-        self.pos.y = self.pos.y / size.y as f32;
-        self
     }
 }

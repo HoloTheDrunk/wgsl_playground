@@ -77,12 +77,18 @@ fn perlin_octaves(uv: vec2f, octaves: i32) -> f32 {
     return col;
 }
 
+const DISTORTION_FACTOR: f32 = 0.0025;
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    var uv = vec2f(in.tex_coords.x, 1. - in.tex_coords.y);
-
-    uv.x += .01 * perlin_octaves(uv, 5);
-    uv.y += .01 * perlin_octaves(uv, 5);
-    
-    return sdf_example(uv);
+    // var uv = vec2f(in.tex_coords.x, in.tex_coords.y);
+    //
+    // uv.x += DISTORTION_FACTOR * perlin_octaves(uv, 5);
+    // uv.y += DISTORTION_FACTOR * perlin_octaves(uv, 5);
+    // 
+    // return sdf_example(uv);
+    if distance(in.tex_coords, mouse.pos) < .1 {
+        return vec4<f32>(1., 0., 0., 1.);
+    }
+    return vec4f(in.tex_coords.x, in.tex_coords.y, 0., 1.);
 }

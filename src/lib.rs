@@ -429,10 +429,10 @@ impl<'a> State<'a> {
 
         // Mouse
         self.mouse.update(&self.queue);
-        let mut data = MouseUniform::from_data(&self.mouse.data).normalize(glam::Vec2::new(
-            self.size.width as f32,
-            self.size.height as f32,
-        ));
+        let mut data = MouseUniform::new(
+            &self.mouse.data,
+            glam::Vec2::new(self.size.width as f32, self.size.height as f32),
+        );
         self.queue
             .write_buffer(&self.mouse.buffer, 0, bytemuck::cast_slice(&[data]));
 
