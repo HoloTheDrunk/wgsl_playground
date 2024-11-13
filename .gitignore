@@ -1,3 +1,10 @@
+# Cargo
 /target
 /Cargo.lock
+
+# Generated assets
 /assets/generated/
+
+# Renderdoc
+**.cap
+**.rdc

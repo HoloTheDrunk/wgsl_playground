@@ -74,6 +74,7 @@ struct State<'a> {
     blit_pipeline_layout: wgpu::PipelineLayout,
 
     diffuse_texture: Texture,
+    diffuse_bind_group_layout: wgpu::BindGroupLayout,
     diffuse_bind_group: wgpu::BindGroup,
 
     file_watcher: notify::RecommendedWatcher,
@@ -302,6 +303,7 @@ impl<'a> State<'a> {
             blit_pipeline,
             blit_pipeline_layout,
             diffuse_texture,
+            diffuse_bind_group_layout,
             diffuse_bind_group,
             debug_buffer,
             debug_buffer_used,
@@ -397,6 +399,20 @@ impl<'a> State<'a> {
                 &self.surface_config,
                 "Diffuse Texture",
             );
+            self.diffuse_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Diffuse Bind Group"),
+                layout: &self.diffuse_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&self.diffuse_texture.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.diffuse_texture.sampler),
+                    },
+                ],
+            });
         }
     }
 
@@ -521,7 +537,7 @@ impl<'a> State<'a> {
                     view: &output_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::RED),
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLUE),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
