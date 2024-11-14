@@ -3,6 +3,8 @@
 
 // Fragment shader
 
+//% include "generated/mouse_state.wgsl"
+
 @group(0) @binding(0)
 var t_diffuse: texture_2d<f32>;
 @group(0) @binding(1)
@@ -26,5 +28,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let b_prio = col.b / (pair + col.r);
     let res = vec4f((pair + col.r) / 3., pair / 2., pair / 2., col.a);
 
-    return res;
+    return select(res, col, mouse.state == Clicked);
 }
