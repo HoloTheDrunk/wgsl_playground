@@ -140,3 +140,81 @@ impl Texture {
         }
     }
 }
+
+pub struct TextureBind {
+    pub texture: Texture,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub bind_group: wgpu::BindGroup,
+}
+impl TextureBind {
+    pub fn new(
+        device: &wgpu::Device,
+        surface_config: &wgpu::SurfaceConfiguration,
+        label: &str,
+    ) -> Self {
+        let texture = Texture::create_diffuse_texture(device, surface_config, label);
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Texture Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Diffuse Bind Group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&texture.sampler),
+                },
+            ],
+        });
+
+        Self {
+            texture,
+            bind_group_layout,
+            bind_group,
+        }
+    }
+}
+
+pub struct TexturePair(TextureBind, TextureBind, bool);
+impl TexturePair {
+    pub fn new(device: &wgpu::Device, surface_config: &wgpu::SurfaceConfiguration) -> Self {
+        let mut textures = ["First TexturePair FBO", "Second TexturePair FBO"]
+            .iter()
+            .map(|label| TextureBind::new(device, surface_config, label));
+        TexturePair(textures.next().unwrap(), textures.next().unwrap(), false)
+    }
+
+    pub fn swap(&mut self) {
+        self.2 = !self.2;
+    }
+
+    pub fn get(&self) -> (&TextureBind, &TextureBind) {
+        if self.2 {
+            (&self.0, &self.1)
+        } else {
+            (&self.1, &self.0)
+        }
+    }
+}

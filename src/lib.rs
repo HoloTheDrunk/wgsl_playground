@@ -10,10 +10,12 @@ mod mouse;
 mod shader_graph;
 mod texture;
 mod timer;
+mod utils;
 
 use {
     mouse::{Mouse, MouseData, MouseUniform},
-    texture::Texture,
+    texture::{Texture, TexturePair},
+    utils::{FileWatcher, SceneTime},
 };
 
 use std::path::{Path, PathBuf};
@@ -64,167 +66,6 @@ struct Pipeline {
     shader: shader_graph::ShaderGraph,
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::PipelineLayout,
-}
-
-struct TextureBind {
-    texture: Texture,
-    bind_group_layout: wgpu::BindGroupLayout,
-    bind_group: wgpu::BindGroup,
-}
-impl TextureBind {
-    fn new(
-        device: &wgpu::Device,
-        surface_config: &wgpu::SurfaceConfiguration,
-        label: &str,
-    ) -> Self {
-        let texture = Texture::create_diffuse_texture(device, surface_config, label);
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Texture Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Diffuse Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&texture.sampler),
-                },
-            ],
-        });
-
-        Self {
-            texture,
-            bind_group_layout,
-            bind_group,
-        }
-    }
-}
-
-struct TexturePair(TextureBind, TextureBind, bool);
-impl TexturePair {
-    fn new(device: &wgpu::Device, surface_config: &wgpu::SurfaceConfiguration) -> Self {
-        let mut textures = ["First TexturePair FBO", "Second TexturePair FBO"]
-            .iter()
-            .map(|label| TextureBind::new(device, surface_config, label));
-        TexturePair(textures.next().unwrap(), textures.next().unwrap(), false)
-    }
-
-    fn swap(&mut self) {
-        self.2 = !self.2;
-    }
-
-    fn get(&self) -> (&TextureBind, &TextureBind) {
-        if self.2 {
-            (&self.0, &self.1)
-        } else {
-            (&self.1, &self.0)
-        }
-    }
-}
-
-struct FileWatcher {
-    watcher: notify::RecommendedWatcher,
-    event_receiver: std::sync::mpsc::Receiver<Vec<PathBuf>>,
-}
-
-impl FileWatcher {
-    fn init() -> Self {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if let Ok(notify::Event {
-                kind: EventKind::Access(AccessKind::Close(AccessMode::Write)),
-                paths,
-                ..
-            }) = res
-            {
-                tx.send(paths).unwrap();
-            }
-        })
-        .expect("Should init watcher");
-
-        Self {
-            watcher,
-            event_receiver: rx,
-        }
-    }
-
-    fn watch(&mut self, path: &Path) {
-        self.watcher
-            .watch(path, RecursiveMode::NonRecursive)
-            .expect("Should start watching file");
-    }
-}
-
-struct SceneTime {
-    start: std::time::Instant,
-    previous_update: std::time::Instant,
-
-    buffer: wgpu::Buffer,
-    bind_group_layout: wgpu::BindGroupLayout,
-    bind_group: wgpu::BindGroup,
-    deltas_last_second: Vec<f32>,
-}
-
-impl SceneTime {
-    fn new(device: &wgpu::Device) -> Self {
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Time Buffer"),
-            contents: bytemuck::cast_slice(&[0.0f32]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Time Bind Group Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Time Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }],
-        });
-
-        Self {
-            start: std::time::Instant::now(),
-            previous_update: std::time::Instant::now(),
-            buffer,
-            bind_group_layout,
-            bind_group,
-            deltas_last_second: Vec::new(),
-        }
-    }
 }
 
 struct State<'a> {
@@ -332,7 +173,9 @@ impl<'a> State<'a> {
 
                 let render_pipeline_shader =
                     shader_graph::ShaderGraph::try_from_final(assets_folder.join(&path).as_path())
-                        .unwrap_or_else(|_| panic!("Shader code should be available at path '{path}'"));
+                        .unwrap_or_else(|_| {
+                            panic!("Shader code should be available at path '{path}'")
+                        });
 
                 let render_pipeline_layout =
                     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -534,10 +377,12 @@ impl<'a> State<'a> {
                     .last()
                     .expect("Shader should have at least one node at this point");
 
-                if !&updated_paths.contains(
-                    &last.path.canonicalize().unwrap_or_else(|_| panic!("Shader path should be canonicalizable: '{}'",
-                            last.path.to_str().unwrap())),
-                ) {
+                if !&updated_paths.contains(&last.path.canonicalize().unwrap_or_else(|_| {
+                    panic!(
+                        "Shader path should be canonicalizable: '{}'",
+                        last.path.to_str().unwrap()
+                    )
+                })) {
                     continue;
                 }
 
