@@ -70,13 +70,8 @@ impl ShaderGraph {
                         provided_path.push_str(".wgsl");
                     }
                     let include_path = workdir.join(provided_path);
-                    let include_path = include_path.canonicalize().expect(
-                        format!(
-                            "Provided path should be canonicalizable: `{}`",
-                            include_path.to_str().unwrap()
-                        )
-                        .as_str(),
-                    );
+                    let include_path = include_path.canonicalize().unwrap_or_else(|_| panic!("Provided path should be canonicalizable: `{}`",
+                            include_path.to_str().unwrap()));
 
                     if let Some(node) = self.nodes.get(include_path.as_path()) {
                         deps.push(node.clone());
@@ -177,7 +172,7 @@ impl ShaderGraph {
             }
         }
 
-        return last;
+        last
     }
 
     pub fn paths(&self) -> impl Iterator<Item = &Path> {
@@ -240,15 +235,15 @@ mod test {
     use super::*;
     use indoc::indoc;
 
-    fn run_test<S, T, C>(setup: S, test: T, cleanup: C) -> ()
+    fn run_test<S, T, C>(setup: S, test: T, cleanup: C)
     where
-        S: FnOnce() -> (),
-        T: FnOnce() -> () + std::panic::UnwindSafe,
-        C: FnOnce() -> (),
+        S: FnOnce(),
+        T: FnOnce() + std::panic::UnwindSafe,
+        C: FnOnce(),
     {
         setup();
 
-        let result = std::panic::catch_unwind(|| test());
+        let result = std::panic::catch_unwind(test);
 
         cleanup();
 

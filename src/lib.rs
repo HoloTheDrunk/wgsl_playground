@@ -77,7 +77,7 @@ impl TextureBind {
         surface_config: &wgpu::SurfaceConfiguration,
         label: &str,
     ) -> Self {
-        let texture = Texture::create_diffuse_texture(&device, &surface_config, label);
+        let texture = Texture::create_diffuse_texture(device, surface_config, label);
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Texture Bind Group Layout"),
             entries: &[
@@ -287,7 +287,7 @@ impl<'a> State<'a> {
             .formats
             .iter()
             .find(|f| f.is_srgb())
-            .or(surface_caps.formats.get(0))
+            .or(surface_caps.formats.first())
             .copied()
             .expect("Surface is incompatible with adapter.");
 
@@ -332,9 +332,7 @@ impl<'a> State<'a> {
 
                 let render_pipeline_shader =
                     shader_graph::ShaderGraph::try_from_final(assets_folder.join(&path).as_path())
-                        .expect(
-                            format!("Shader code should be available at path '{path}'").as_str(),
-                        );
+                        .unwrap_or_else(|_| panic!("Shader code should be available at path '{path}'"));
 
                 let render_pipeline_layout =
                     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -355,7 +353,7 @@ impl<'a> State<'a> {
                         &render_pipeline_layout,
                         format!("Render Pipeline ({path})").as_str(),
                     )
-                    .expect(format!("Shader should compile ({path})").as_str()),
+                    .unwrap_or_else(|_| panic!("Shader should compile ({path})")),
                     shader: render_pipeline_shader,
                     layout: render_pipeline_layout,
                 }
@@ -437,7 +435,7 @@ impl<'a> State<'a> {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 cache: None,
                 label: Some(label),
-                layout: Some(&render_pipeline_layout),
+                layout: Some(render_pipeline_layout),
                 vertex: wgpu::VertexState {
                     compilation_options: Default::default(),
                     module: &shader,
@@ -528,7 +526,7 @@ impl<'a> State<'a> {
         // File watcher
         if let Ok(updated_paths) = self.file_watcher.event_receiver.try_recv() {
             // Drain channel
-            while let Ok(_) = self.file_watcher.event_receiver.try_recv() {}
+            while self.file_watcher.event_receiver.try_recv().is_ok() {}
 
             for pipeline in self.render_pipelines.iter_mut() {
                 let last = pipeline
@@ -537,13 +535,8 @@ impl<'a> State<'a> {
                     .expect("Shader should have at least one node at this point");
 
                 if !&updated_paths.contains(
-                    &last.path.canonicalize().expect(
-                        format!(
-                            "Shader path should be canonicalizable: '{}'",
-                            last.path.to_str().unwrap()
-                        )
-                        .as_str(),
-                    ),
+                    &last.path.canonicalize().unwrap_or_else(|_| panic!("Shader path should be canonicalizable: '{}'",
+                            last.path.to_str().unwrap())),
                 ) {
                     continue;
                 }

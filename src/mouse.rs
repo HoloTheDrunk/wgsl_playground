@@ -84,7 +84,7 @@ impl InputEventProcessor for MouseData {
                 if button == &mouse_button => {}
             _ => {
                 self.hold_timer_ms.start();
-                self.state = MouseState::Clicked(button.clone());
+                self.state = MouseState::Clicked(*button);
             }
         };
 
@@ -169,8 +169,8 @@ impl MouseUniform {
     pub fn new(data: &MouseData, size: glam::Vec2) -> Self {
         Self {
             pos: glam::Vec2::new(
-                data.pos.x as f32 / size.x as f32,
-                data.pos.y as f32 / size.y as f32,
+                data.pos.x as f32 / size.x,
+                data.pos.y as f32 / size.y,
             ),
             state: match data.state {
                 MouseState::Idle => 0,
