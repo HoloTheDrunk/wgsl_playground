@@ -11,13 +11,12 @@ mod shader_graph;
 mod texture;
 mod timer;
 
-use std::path::Path;
+use {
+    mouse::{Mouse, MouseData, MouseUniform},
+    texture::Texture,
+};
 
-use mouse::{Mouse, MouseData, MouseUniform};
-
-use serde::Deserialize;
-use texture::Texture;
-use winit::platform::x11::WindowBuilderExtX11;
+use std::path::{Path, PathBuf};
 
 use {
     bytemuck::Zeroable,
@@ -26,7 +25,9 @@ use {
         EventKind, RecursiveMode, Watcher,
     },
     seq_macro::seq,
+    serde::Deserialize,
     wgpu::util::DeviceExt,
+    winit::platform::x11::WindowBuilderExtX11,
     winit::{
         dpi::{PhysicalPosition, PhysicalSize},
         event::*,
@@ -145,7 +146,7 @@ impl TexturePair {
 
 struct FileWatcher {
     watcher: notify::RecommendedWatcher,
-    event_receiver: std::sync::mpsc::Receiver<()>,
+    event_receiver: std::sync::mpsc::Receiver<Vec<PathBuf>>,
 }
 
 impl FileWatcher {
@@ -154,10 +155,11 @@ impl FileWatcher {
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             if let Ok(notify::Event {
                 kind: EventKind::Access(AccessKind::Close(AccessMode::Write)),
+                paths,
                 ..
             }) = res
             {
-                tx.send(()).unwrap();
+                tx.send(paths).unwrap();
             }
         })
         .expect("Should init watcher");
@@ -235,7 +237,7 @@ struct State<'a> {
 
     assets_folder: std::path::PathBuf,
 
-    render_pipeline: Pipeline,
+    render_pipelines: Vec<Pipeline>,
     blit_pipeline: Pipeline,
 
     texture_pair: TexturePair,
@@ -319,27 +321,46 @@ impl<'a> State<'a> {
         let mouse = Mouse::new(&device, MouseData::new(1000));
 
         // Render pipeline
-        let render_pipeline_shader =
-            shader_graph::ShaderGraph::try_from_final(assets_folder.join("shader.wgsl").as_path())
-                .expect("Shader code should be available at path");
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&time.bind_group_layout, &mouse.bind_group_layout],
-                push_constant_ranges: &[],
-            });
-        let render_pipeline = Pipeline {
-            pipeline: Self::create_render_pipeline(
-                &device,
-                &surface_config,
-                &render_pipeline_shader,
-                &render_pipeline_layout,
-                "Render Pipeline",
-            )
-            .expect("Shader should compile"),
-            shader: render_pipeline_shader,
-            layout: render_pipeline_layout,
-        };
+        let render_pipelines = config
+            .shader_paths
+            .iter()
+            .map(|path| {
+                let path = match &path[path.len() - 5..] {
+                    ".wgsl" => path.to_owned(),
+                    _ => format!("{path}.wgsl"),
+                };
+
+                let render_pipeline_shader =
+                    shader_graph::ShaderGraph::try_from_final(assets_folder.join(&path).as_path())
+                        .expect(
+                            format!("Shader code should be available at path '{path}'").as_str(),
+                        );
+
+                let render_pipeline_layout =
+                    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some("Render Pipeline Layout"),
+                        bind_group_layouts: &[
+                            &texture_pair.get().0.bind_group_layout,
+                            &time.bind_group_layout,
+                            &mouse.bind_group_layout,
+                        ],
+                        push_constant_ranges: &[],
+                    });
+
+                Pipeline {
+                    pipeline: Self::create_render_pipeline(
+                        &device,
+                        &surface_config,
+                        &render_pipeline_shader,
+                        &render_pipeline_layout,
+                        format!("Render Pipeline ({path})").as_str(),
+                    )
+                    .expect(format!("Shader should compile ({path})").as_str()),
+                    shader: render_pipeline_shader,
+                    layout: render_pipeline_layout,
+                }
+            })
+            .collect::<Vec<_>>();
 
         // Render pipeline
         let blit_pipeline_shader =
@@ -366,7 +387,10 @@ impl<'a> State<'a> {
 
         // File Watcher
         let mut file_watcher = FileWatcher::init();
-        for path in render_pipeline.shader.paths() {
+        for path in render_pipelines
+            .iter()
+            .flat_map(|pipeline| pipeline.shader.paths())
+        {
             file_watcher.watch(path);
         }
         file_watcher.watch(assets_folder.join("blit.wgsl").as_path());
@@ -379,7 +403,7 @@ impl<'a> State<'a> {
             surface_config,
             size,
             assets_folder,
-            render_pipeline,
+            render_pipelines,
             blit_pipeline,
             texture_pair,
             file_watcher,
@@ -502,26 +526,46 @@ impl<'a> State<'a> {
             .write_buffer(&self.mouse.buffer, 0, bytemuck::cast_slice(&[data]));
 
         // File watcher
-        if self.file_watcher.event_receiver.try_recv().is_ok() {
+        if let Ok(updated_paths) = self.file_watcher.event_receiver.try_recv() {
             // Drain channel
             while let Ok(_) = self.file_watcher.event_receiver.try_recv() {}
 
-            let shader = self
-                .render_pipeline
-                .shader
-                .last()
-                .map(|last| shader_graph::ShaderGraph::try_from_final(last.path.as_path()))
-                .expect("Shader should have at least one node at this point")
-                .expect("Shader graph should be possible to build");
+            for pipeline in self.render_pipelines.iter_mut() {
+                let last = pipeline
+                    .shader
+                    .last()
+                    .expect("Shader should have at least one node at this point");
 
-            if let Ok(new_pipeline) = Self::create_render_pipeline(
-                &self.device,
-                &self.surface_config,
-                &shader,
-                &self.render_pipeline.layout,
-                "Render Pipeline",
-            ) {
-                self.render_pipeline.pipeline = new_pipeline;
+                if !&updated_paths.contains(
+                    &last.path.canonicalize().expect(
+                        format!(
+                            "Shader path should be canonicalizable: '{}'",
+                            last.path.to_str().unwrap()
+                        )
+                        .as_str(),
+                    ),
+                ) {
+                    continue;
+                }
+
+                let shader = shader_graph::ShaderGraph::try_from_final(last.path.as_path())
+                    .expect("Shader graph should be possible to build");
+
+                if let Ok(new_pipeline) = Self::create_render_pipeline(
+                    &self.device,
+                    &self.surface_config,
+                    &shader,
+                    &pipeline.layout,
+                    format!(
+                        "Render Pipeline ({})",
+                        last.path
+                            .to_str()
+                            .expect("Last node path should already be to be valid")
+                    )
+                    .as_str(),
+                ) {
+                    pipeline.pipeline = new_pipeline;
+                }
             }
         }
     }
@@ -538,32 +582,35 @@ impl<'a> State<'a> {
                 label: Some("Render Encoder"),
             });
 
-        // Intermediate render
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Intermediate Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.texture_pair.get().1.texture.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::RED),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+        // Intermediate renders
+        for render_pipeline in self.render_pipelines.iter() {
+            {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Intermediate Render Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.texture_pair.get().1.texture.view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::RED),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
 
-            render_pass.set_pipeline(&self.render_pipeline.pipeline);
+                render_pass.set_pipeline(&render_pipeline.pipeline);
 
-            render_pass.set_bind_group(0, &self.time.bind_group, &[]);
-            render_pass.set_bind_group(1, &self.mouse.bind_group, &[]);
+                render_pass.set_bind_group(0, &self.texture_pair.get().0.bind_group, &[]);
+                render_pass.set_bind_group(1, &self.time.bind_group, &[]);
+                render_pass.set_bind_group(2, &self.mouse.bind_group, &[]);
 
-            render_pass.draw(0..3, 0..1);
+                render_pass.draw(0..3, 0..1);
+            }
+
+            self.texture_pair.swap();
         }
-
-        self.texture_pair.swap();
 
         // Blit
         {
@@ -584,7 +631,7 @@ impl<'a> State<'a> {
 
             render_pass.set_pipeline(&self.blit_pipeline.pipeline);
 
-            render_pass.set_bind_group(0, &self.texture_pair.0.bind_group, &[]);
+            render_pass.set_bind_group(0, &self.texture_pair.get().0.bind_group, &[]);
 
             render_pass.draw(0..3, 0..1);
         }
@@ -604,8 +651,7 @@ pub struct Config {
     fps_limit: Option<u32>,
 
     assets_folder: String,
-    // TODO: Make shader loading dynamic
-    // shader_names: Vec<String>,
+    shader_paths: Vec<String>,
 }
 
 impl Default for Config {
@@ -615,7 +661,7 @@ impl Default for Config {
             window_title: "WGSL Playground".to_string(),
             fps_limit: Some(60),
             assets_folder: "assets".to_string(),
-            // shader_names: vec!["shader".to_string()],
+            shader_paths: vec!["shader".to_string()],
         }
     }
 }

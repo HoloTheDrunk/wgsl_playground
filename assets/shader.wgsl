@@ -8,6 +8,11 @@
 //% include "lib/noise/perlin"
 
 @group(0) @binding(0)
+var t_diffuse: texture_2d<f32>;
+@group(0) @binding(1)
+var s_diffuse: sampler;
+
+@group(1) @binding(0)
 var<uniform> time: f32;
 
 struct Mouse {
@@ -15,7 +20,7 @@ struct Mouse {
     state: u32,
 }
 
-@group(1) @binding(0)
+@group(2) @binding(0)
 var<uniform> mouse: Mouse;
 
 // SDF example constants
@@ -54,14 +59,14 @@ fn sdf_example(uv: vec2f) -> vec4f {
 
     var color: vec3<f32>;
     switch mouse.state {
-        case Idle, default: {
-            color = lines * select(OUTSIDE_COLOR, INSIDE_COLOR, dist < 0.);
+        case Held: {
+            color = f32(dist < 0) * vec3<f32>(1.);
         }
         case Clicked: {
             color = lines * select(INSIDE_COLOR, OUTSIDE_COLOR, dist < 0.);
         }
-        case Held: {
-            color = f32(dist < 0) * vec3<f32>(1.);
+        case Idle, default: {
+            color = lines * select(OUTSIDE_COLOR, INSIDE_COLOR, dist < 0.);
         }
     }
     return vec4<f32>(color, 1.);
