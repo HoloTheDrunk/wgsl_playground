@@ -577,3 +577,37 @@ fn handle_event(state: &mut State<'_>, event: Event<()>, control_flow: &EventLoo
 
     state.window().request_redraw();
 }
+
+#[cfg(test)]
+mod test {
+    pub(crate) struct Test {
+        pub setup: Box<dyn FnOnce() -> ()>,
+        pub test: Box<dyn FnOnce() -> () + std::panic::UnwindSafe>,
+        pub cleanup: Box<dyn FnOnce() -> ()>,
+    }
+
+    impl Test {
+        pub(crate) fn new<S, T, C>(setup: S, test: T, cleanup: C) -> Self
+        where
+            S: FnOnce() -> () + 'static,
+            T: FnOnce() -> () + std::panic::UnwindSafe + 'static,
+            C: FnOnce() -> () + 'static,
+        {
+            Self {
+                setup: Box::new(setup),
+                test: Box::new(test),
+                cleanup: Box::new(cleanup),
+            }
+        }
+    }
+
+    pub(crate) fn run_test(test: Test) -> () {
+        (test.setup)();
+
+        let result = std::panic::catch_unwind(test.test);
+
+        (test.cleanup)();
+
+        assert!(result.is_ok())
+    }
+}

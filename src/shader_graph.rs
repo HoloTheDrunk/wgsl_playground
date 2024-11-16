@@ -70,8 +70,12 @@ impl ShaderGraph {
                         provided_path.push_str(".wgsl");
                     }
                     let include_path = workdir.join(provided_path);
-                    let include_path = include_path.canonicalize().unwrap_or_else(|_| panic!("Provided path should be canonicalizable: `{}`",
-                            include_path.to_str().unwrap()));
+                    let include_path = include_path.canonicalize().unwrap_or_else(|_| {
+                        panic!(
+                            "Provided path should be canonicalizable: `{}`",
+                            include_path.to_str().unwrap()
+                        )
+                    });
 
                     if let Some(node) = self.nodes.get(include_path.as_path()) {
                         deps.push(node.clone());
@@ -233,26 +237,12 @@ pub enum ShaderErrorVariant {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::test::{run_test, Test};
     use indoc::indoc;
-
-    fn run_test<S, T, C>(setup: S, test: T, cleanup: C)
-    where
-        S: FnOnce(),
-        T: FnOnce() + std::panic::UnwindSafe,
-        C: FnOnce(),
-    {
-        setup();
-
-        let result = std::panic::catch_unwind(test);
-
-        cleanup();
-
-        assert!(result.is_ok())
-    }
 
     #[test]
     fn shader_graph() {
-        run_test(
+        run_test(Test::new(
             || {
                 if !Path::new("./.test_dir").is_dir() {
                     std::fs::create_dir("./.test_dir")
@@ -308,6 +298,6 @@ mod test {
                     .expect("Wgsl test files should be deleted");
                 std::fs::remove_dir(".test_dir").expect(".test_dir should be removed");
             },
-        )
+        ))
     }
 }

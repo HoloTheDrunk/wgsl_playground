@@ -33,3 +33,25 @@ impl SimpleTimer {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::test::*;
+
+    #[test]
+    fn timer_300ms() {
+        run_test(Test::new(
+            || {},
+            || {
+                let mut timer = SimpleTimer::from_ms(300);
+                timer.start();
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                assert!(!timer.is_finished());
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                assert!(timer.is_finished());
+            },
+            || {},
+        ));
+    }
+}
