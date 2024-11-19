@@ -10,6 +10,7 @@ mod mouse;
 mod shader_graph;
 mod texture;
 mod timer;
+mod ui;
 mod utils;
 
 use {
