@@ -2,6 +2,7 @@ use glam::Vec2;
 
 use super::SdfObject;
 
+#[derive(Debug)]
 pub struct Circle {
     pub center: Vec2,
     pub radius: f32,
@@ -22,6 +23,13 @@ impl SdfObject for Circle {
     }
 }
 
+impl Circle {
+    pub fn new(center: Vec2, radius: f32) -> Self {
+        Self { center, radius }
+    }
+}
+
+#[derive(Debug)]
 pub struct Rectangle {
     pub center: Vec2,
     pub half_size: Vec2,

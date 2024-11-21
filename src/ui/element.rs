@@ -2,7 +2,7 @@ use glam::{FloatExt as _, Vec2};
 
 use super::SdfObject;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Operation {
     Merge,
     Intersect,
@@ -72,6 +72,7 @@ impl Operation {
     }
 }
 
+#[derive(Debug)]
 pub enum Element {
     Node { children: Vec<(Element, Operation)> },
     Leaf(Box<dyn SdfObject>),
@@ -101,17 +102,25 @@ impl SdfObject for Element {
 
 macro_rules! element {
     ((Node [$(
-        ($op:expr => $child:tt)
+        ($child:tt $op:expr)
     ),* $(,)?])) => {
         Element::Node {
             children: vec![$(
-                ($child, $op)
+                (element!($child), $op)
             ),*]
         }
     };
 
+    ((Leaf $shape:tt)) => {
+        Element::Leaf(Box::new(element!($shape)))
+    };
+
     ((Leaf $shape:expr)) => {
         Element::Leaf(Box::new($shape))
+    };
+
+    ((Shape $shape:path : $(($arg:expr))*)) => {
+        <$shape>::new($($arg),*)
     };
 
     () => {()};
@@ -127,8 +136,13 @@ mod test {
     fn ui_macro() {
         let elem = element! {
             (Node [
-                (Operation::Merge => (Leaf Circle::default())),
+                ((Node [
+                    ((Leaf Circle::default()) Operation::Merge),
+                ]) Operation::Merge),
+                ((Leaf (Shape Circle : (Vec2::ZERO) (1.))) Operation::Merge),
             ])
         };
+
+        dbg!(elem);
     }
 }
