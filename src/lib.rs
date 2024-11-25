@@ -399,7 +399,7 @@ impl<'a> State<'a> {
                         "Render Pipeline ({})",
                         last.path
                             .to_str()
-                            .expect("Last node path should already be to be valid")
+                            .expect("Last node path should already be valid")
                     )
                     .as_str(),
                 ) {

@@ -1,4 +1,8 @@
-use glam::{FloatExt as _, Vec2};
+use {
+    glam::{FloatExt as _, Vec2},
+    indoc::{formatdoc, indoc},
+    std::collections::VecDeque,
+};
 
 use super::SdfObject;
 
@@ -61,50 +65,100 @@ fn round_subtract(lhs: f32, rhs: f32, radius: f32) -> f32 {
 impl Operation {
     fn run(self, lhs: f32, rhs: f32) -> f32 {
         match self {
-            Operation::Merge => merge(lhs, rhs),
-            Operation::Intersect => intersect(lhs, rhs),
-            Operation::Subtract => subtract(lhs, rhs),
-            Operation::Interpolate { amount } => interpolate(lhs, rhs, amount),
-            Operation::RoundMerge { radius } => round_merge(lhs, rhs, radius),
-            Operation::RoundIntersect { radius } => round_intersect(lhs, rhs, radius),
-            Operation::RoundSubtract { radius } => round_subtract(lhs, rhs, radius),
+            Self::Merge => merge(lhs, rhs),
+            Self::Intersect => intersect(lhs, rhs),
+            Self::Subtract => subtract(lhs, rhs),
+            Self::Interpolate { amount } => interpolate(lhs, rhs, amount),
+            Self::RoundMerge { radius } => round_merge(lhs, rhs, radius),
+            Self::RoundIntersect { radius } => round_intersect(lhs, rhs, radius),
+            Self::RoundSubtract { radius } => round_subtract(lhs, rhs, radius),
+        }
+    }
+}
+
+impl Operation {
+    pub fn wgsl_counterpart(&self) -> (&'static str, Option<Vec<String>>) {
+        match self {
+            Self::Merge => ("merge", None),
+            Self::Intersect => ("intersect", None),
+            Self::Subtract => ("subtract", None),
+            Self::Interpolate { amount } => ("interpolate", Some(vec![format!("{amount}")])),
+            Self::RoundMerge { radius } => ("round_merge", Some(vec![format!("{radius}")])),
+            Self::RoundIntersect { radius } => ("round_intersect", Some(vec![format!("{radius}")])),
+            Self::RoundSubtract { radius } => ("round_subtract", Some(vec![format!("{radius}")])),
         }
     }
 }
 
 #[derive(Debug)]
 pub enum Element {
-    Node { children: Vec<(Element, Operation)> },
+    Node {
+        first: Box<Element>,
+        children: Vec<(Element, Operation)>,
+    },
     Leaf(Box<dyn SdfObject>),
 }
 
 impl SdfObject for Element {
     fn dist(&self, pos: glam::Vec2) -> f32 {
         match self {
-            Element::Node { children } => {
-                let Some(first) = children.first().map(|(elem, op)| (elem.dist(pos), op)) else {
-                    return 0.;
-                };
-
-                let res = children
-                    .iter()
-                    .skip(1)
-                    .fold(first, |(dist, op), (elem, next_op)| {
-                        (op.run(dist, elem.dist(pos)), next_op)
-                    });
-
-                res.0
+            Element::Node { first, children } => {
+                children.iter().fold(first.dist(pos), |dist, (elem, op)| {
+                    op.run(dist, elem.dist(pos))
+                })
             }
             Element::Leaf(sdf_object) => sdf_object.dist(pos),
+        }
+    }
+
+    // TODO: Organize this better to avoid having to do this.
+    fn fn_call(&self) -> String {
+        unreachable!("Don't call this")
+    }
+}
+
+impl Element {
+    pub fn to_wgsl_function(&self, label: &str) -> String {
+        let formula = self.to_wgsl_expr();
+        let function = formatdoc! {"
+            fn {label}(uv: vec2f) -> f32 {{
+                return {formula};
+            }}
+        "};
+        function
+    }
+
+    // PERF: horribly inefficient but might not matter
+    fn to_wgsl_expr(&self) -> String {
+        match self {
+            Element::Node { first, children } => {
+                let mut res: VecDeque<_> = vec![first.to_wgsl_expr()].into();
+
+                for (child, op) in children.iter() {
+                    let (fun, args) = op.wgsl_counterpart();
+
+                    res.push_front(format!("{fun}("));
+
+                    res.push_back(format!(", {}", child.to_wgsl_expr()));
+
+                    if let Some(args) = args {
+                        res.push_back(format!(", {})", args.join(", ")));
+                    }
+                }
+
+                res.into_iter().collect::<String>()
+            }
+            Element::Leaf(sdf_object) => sdf_object.fn_call(),
         }
     }
 }
 
 macro_rules! element {
-    ((Node [$(
+    ((Node $first:tt [ $(
         ($child:tt $op:expr)
     ),* $(,)?])) => {
         Element::Node {
+            first: Box::new(element!($first)),
             children: vec![$(
                 (element!($child), $op)
             ),*]
@@ -135,14 +189,12 @@ mod test {
     #[test]
     fn ui_macro() {
         let elem = element! {
-            (Node [
-                ((Node [
-                    ((Leaf Circle::default()) Operation::Merge),
-                ]) Operation::Merge),
+            (Node (Node (Leaf Circle::default()) []) [
                 ((Leaf (Shape Circle : (Vec2::ZERO) (1.))) Operation::Merge),
             ])
         };
 
-        dbg!(elem);
+        dbg!(&elem);
+        println!("{}", elem.to_wgsl_function("element_test"));
     }
 }

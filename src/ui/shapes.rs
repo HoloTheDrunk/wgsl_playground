@@ -21,6 +21,15 @@ impl SdfObject for Circle {
     fn dist(&self, pos: Vec2) -> f32 {
         pos.distance(self.center) - self.radius
     }
+
+    fn fn_call(&self) -> String {
+        format!(
+            "disc(pos, vec2f({}, {}), {})",
+            self.center.x,
+            self.center.y,
+            self.radius.to_string()
+        )
+    }
 }
 
 impl Circle {
@@ -41,5 +50,12 @@ impl SdfObject for Rectangle {
         let outside_distance = edge_distances.max(Vec2::ZERO).length();
         let inside_distance = edge_distances.x.max(edge_distances.y).min(0.);
         outside_distance + inside_distance
+    }
+
+    fn fn_call(&self) -> String {
+        format!(
+            "rectangle(pos, vec2f({}, {}), vec2f({}, {}))",
+            self.center.x, self.center.y, self.half_size.x, self.half_size.y,
+        )
     }
 }

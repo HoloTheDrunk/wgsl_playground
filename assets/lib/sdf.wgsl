@@ -1,12 +1,12 @@
 // SDF Shapes
 
-fn disc(point: vec2<f32>, center: vec2<f32>, radius: f32) -> f32 {
-    let dist = distance(point, center);
+fn disc(pos: vec2<f32>, center: vec2<f32>, radius: f32) -> f32 {
+    let dist = distance(pos, center);
     return dist - radius;
 }
 
-fn rectangle(point: vec2<f32>, center: vec2<f32>, half_size: vec2<f32>) -> f32 {
-    let edge_distances = abs(point - center) - half_size;
+fn rectangle(pos: vec2<f32>, center: vec2<f32>, half_size: vec2<f32>) -> f32 {
+    let edge_distances = abs(pos - center) - half_size;
     let outside_distance = length(max(edge_distances, vec2<f32>(0, 0)));
     let inside_distance = min(max(edge_distances.x, edge_distances.y), 0.);
     return outside_distance + inside_distance;
