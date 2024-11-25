@@ -31,3 +31,8 @@ fs_extra = "1.3.0"
 futures = "0.3.30"
 indoc = "2.0.5"
 mktemp = "0.5.1"
+
+[[test]]
+name = "gltests"
+path = "gltests/main.rs"
+harness = false

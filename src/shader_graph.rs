@@ -1,32 +1,43 @@
 use std::{
     collections::{HashMap, VecDeque},
+    ffi::OsStr,
     fmt::Display,
-    io::BufRead,
+    io::{BufRead, Read},
     path::{Path, PathBuf},
     rc::Rc,
 };
 
 pub struct ShaderGraph {
-    nodes: HashMap<PathBuf, Rc<ShaderGraphNode>>,
+    nodes: HashMap<Rc<NodeId>, Rc<Node>>,
 }
 
-pub struct ShaderGraphNode {
-    deps: Vec<Rc<ShaderGraphNode>>,
-    pub path: PathBuf,
+#[derive(Debug, Hash, Eq, PartialEq)]
+pub enum NodeId {
+    Path(PathBuf),
+    Label(String),
+}
+
+pub struct Node {
+    deps: Vec<Rc<Node>>,
+    pub id: Rc<NodeId>,
     pub code: String,
 }
 
 impl ShaderGraph {
-    fn try_add_node(&mut self, path: &Path) -> Result<Rc<ShaderGraphNode>, ShaderError> {
-        let canon_path = path.canonicalize()?;
-        let file = std::fs::File::open(path)?;
-        let mut reader = std::io::BufReader::new(file);
+    fn try_add_node(
+        &mut self,
+        read: impl Read,
+        workdir: &Path,
+        id: NodeId,
+    ) -> Result<Rc<Node>, ShaderError> {
+        let mut reader = std::io::BufReader::new(read);
 
         let mut deps = Vec::new();
         let mut code = String::new();
 
         let mut line = String::new();
         let mut line_number = 0;
+
         while reader.read_line(&mut line)? != 0 {
             if !line.starts_with("//%") {
                 code.push_str(line.as_str());
@@ -46,21 +57,12 @@ impl ShaderGraph {
             match parts[0] {
                 "include" => {
                     if parts.len() != 2 {
-                        println!("[ERROR] {path:?}: {parts:?}");
+                        println!("[ERROR] {id:?}: {parts:?}");
                         return err(
                             ShaderErrorVariant::PPD,
                             &"include directive takes exactly one path argument",
                         );
                     }
-
-                    // --- Path resolution
-                    let sys_workdir =
-                        std::env::current_dir().expect("System working directory should be valid");
-
-                    let workdir = path
-                        .parent()
-                        .map(|p| sys_workdir.join(p))
-                        .unwrap_or(sys_workdir);
 
                     let mut provided_path = parts[1][1..(parts[1].len() - 1)].to_string();
                     // Add .wgsl extension if it was omitted
@@ -69,11 +71,9 @@ impl ShaderGraph {
                     {
                         provided_path.push_str(".wgsl");
                     }
-                    let include_path = workdir.join(provided_path);
-                    let include_path = include_path.canonicalize().unwrap_or_else(|_| panic!("Provided path should be canonicalizable: `{}`",
-                            include_path.to_str().unwrap()));
+                    let include_path = workdir.join(provided_path).canonicalize()?;
 
-                    if let Some(node) = self.nodes.get(include_path.as_path()) {
+                    if let Some(node) = self.nodes.get(&NodeId::Path(include_path.clone())) {
                         deps.push(node.clone());
                         line.clear();
                         continue;
@@ -81,7 +81,20 @@ impl ShaderGraph {
 
                     let include_node = std::fs::read_to_string(include_path.as_path())
                         .map_err(ShaderError::from)
-                        .and_then(|code| self.try_add_node(include_path.as_path()))?;
+                        .and_then(|code| {
+                            let sys_workdir = std::env::current_dir()
+                                .expect("System working directory should be valid");
+
+                            let workdir = include_path
+                                .parent()
+                                .map(|p| sys_workdir.join(p))
+                                .unwrap_or(sys_workdir);
+
+                            let canon_path = include_path.canonicalize()?;
+                            let file = std::fs::File::open(&canon_path)?;
+
+                            self.try_add_node(file, workdir.as_path(), NodeId::Path(canon_path))
+                        })?;
 
                     deps.push(include_node);
                 }
@@ -97,30 +110,64 @@ impl ShaderGraph {
             line_number += 1;
         }
 
-        let node = Rc::new(ShaderGraphNode {
+        let rcid = Rc::new(id);
+        let node = Rc::new(Node {
             deps,
             code,
-            path: path.to_path_buf(),
+            id: rcid.clone(),
         });
-        self.nodes.insert(canon_path, node.clone());
+        self.nodes.insert(rcid, node.clone());
 
         Ok(node)
     }
 
-    pub fn try_from_final(path: &Path) -> Result<Self, ShaderError> {
+    pub fn try_from_file(path: &Path) -> Result<Self, ShaderError> {
         let mut graph = Self {
             nodes: HashMap::new(),
         };
 
-        graph.try_add_node(path)?;
+        let canon_path = path.canonicalize()?;
+        let file = std::fs::File::open(path)?;
+
+        // --- Path resolution
+        let sys_workdir =
+            std::env::current_dir().expect("System working directory should be valid");
+
+        let workdir = path
+            .parent()
+            .map(|p| sys_workdir.join(p))
+            .unwrap_or(sys_workdir);
+
+        graph.try_add_node(file, workdir.as_path(), NodeId::Path(canon_path))?;
+
+        Ok(graph)
+    }
+
+    pub fn try_from_code(
+        code: String,
+        asset_dir: &Path,
+        label: String,
+    ) -> Result<Self, ShaderError> {
+        let mut graph = Self {
+            nodes: HashMap::new(),
+        };
+
+        let sys_workdir =
+            std::env::current_dir().expect("System working directory should be valid");
+
+        graph.try_add_node(
+            code.as_bytes(),
+            sys_workdir.join(asset_dir).as_path(),
+            NodeId::Label(label),
+        )?;
 
         Ok(graph)
     }
 
     fn finish_dfs<'n>(
         &self,
-        node: &'n Rc<ShaderGraphNode>,
-        visited: &mut Vec<&'n Rc<ShaderGraphNode>>,
+        node: &'n Rc<Node>,
+        visited: &mut Vec<&'n Rc<Node>>,
         target_buf: &mut String,
     ) {
         visited.push(node);
@@ -159,7 +206,7 @@ impl ShaderGraph {
         Ok(shader)
     }
 
-    pub fn last(&self) -> Option<&Rc<ShaderGraphNode>> {
+    pub fn last(&self) -> Option<&Rc<Node>> {
         // Find last node, i.e. the only node without any dependent
         let mut last = None;
         for node in self.nodes.values() {
@@ -175,8 +222,8 @@ impl ShaderGraph {
         last
     }
 
-    pub fn paths(&self) -> impl Iterator<Item = &Path> {
-        self.nodes.keys().map(PathBuf::as_path)
+    pub fn ids(&self) -> impl Iterator<Item = &Rc<NodeId>> {
+        self.nodes.keys()
     }
 }
 
@@ -282,7 +329,7 @@ mod test {
                     .expect("Wgsl test files should be written to .test_dir");
             },
             || {
-                let graph = ShaderGraph::try_from_final(Path::new(".test_dir/main.wgsl"))
+                let graph = ShaderGraph::try_from_file(Path::new(".test_dir/main.wgsl"))
                     .expect("Graph should be properly created");
 
                 let code = graph

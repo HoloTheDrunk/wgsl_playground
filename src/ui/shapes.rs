@@ -24,10 +24,8 @@ impl SdfObject for Circle {
 
     fn fn_call(&self) -> String {
         format!(
-            "disc(pos, vec2f({}, {}), {})",
-            self.center.x,
-            self.center.y,
-            self.radius.to_string()
+            "disc(pos, vec2f({:?}, {:?}), {:?})",
+            self.center.x, self.center.y, self.radius
         )
     }
 }
@@ -54,7 +52,7 @@ impl SdfObject for Rectangle {
 
     fn fn_call(&self) -> String {
         format!(
-            "rectangle(pos, vec2f({}, {}), vec2f({}, {}))",
+            "rectangle(pos, vec2f({:?}, {:?}), vec2f({:?}, {:?}))",
             self.center.x, self.center.y, self.half_size.x, self.half_size.y,
         )
     }

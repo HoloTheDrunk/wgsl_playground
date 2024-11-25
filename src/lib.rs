@@ -6,12 +6,12 @@
 //! # wgsl_playground
 //! Simple WGSL shader hot-reloading playground.
 
-mod mouse;
-mod shader_graph;
-mod texture;
-mod timer;
-mod ui;
-mod utils;
+pub mod mouse;
+pub mod shader_graph;
+pub mod texture;
+pub mod timer;
+pub mod ui;
+pub mod utils;
 
 use {
     mouse::{Mouse, MouseData, MouseUniform},
@@ -173,7 +173,7 @@ impl<'a> State<'a> {
                 };
 
                 let render_pipeline_shader =
-                    shader_graph::ShaderGraph::try_from_final(assets_folder.join(&path).as_path())
+                    shader_graph::ShaderGraph::try_from_file(assets_folder.join(&path).as_path())
                         .unwrap_or_else(|_| {
                             panic!("Shader code should be available at path '{path}'")
                         });
@@ -206,7 +206,7 @@ impl<'a> State<'a> {
 
         // Render pipeline
         let blit_pipeline_shader =
-            shader_graph::ShaderGraph::try_from_final(assets_folder.join("blit.wgsl").as_path())
+            shader_graph::ShaderGraph::try_from_file(assets_folder.join("blit.wgsl").as_path())
                 .expect("Shader code should be available at path");
         let blit_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
@@ -229,11 +229,13 @@ impl<'a> State<'a> {
 
         // File Watcher
         let mut file_watcher = FileWatcher::init();
-        for path in render_pipelines
-            .iter()
-            .flat_map(|pipeline| pipeline.shader.paths())
-        {
-            file_watcher.watch(path);
+        for path in render_pipelines.iter().flat_map(|pipeline| {
+            pipeline.shader.ids().filter_map(|rc| match &**rc {
+                shader_graph::NodeId::Path(path_buf) => Some(path_buf.clone()),
+                shader_graph::NodeId::Label(_) => None,
+            })
+        }) {
+            file_watcher.watch(path.as_path());
         }
         file_watcher.watch(assets_folder.join("blit.wgsl").as_path());
 
@@ -378,16 +380,19 @@ impl<'a> State<'a> {
                     .last()
                     .expect("Shader should have at least one node at this point");
 
-                if !&updated_paths.contains(&last.path.canonicalize().unwrap_or_else(|_| {
+                let shader_graph::NodeId::Path(last_path) = &*last.id else {
+                    unreachable!("User render pipelines should use file shaders exclusively");
+                };
+                if !&updated_paths.contains(&last_path.canonicalize().unwrap_or_else(|_| {
                     panic!(
                         "Shader path should be canonicalizable: '{}'",
-                        last.path.to_str().unwrap()
+                        last_path.to_str().unwrap()
                     )
                 })) {
                     continue;
                 }
 
-                let shader = shader_graph::ShaderGraph::try_from_final(last.path.as_path())
+                let shader = shader_graph::ShaderGraph::try_from_file(last_path.as_path())
                     .expect("Shader graph should be possible to build");
 
                 if let Ok(new_pipeline) = Self::create_render_pipeline(
@@ -397,7 +402,7 @@ impl<'a> State<'a> {
                     &pipeline.layout,
                     format!(
                         "Render Pipeline ({})",
-                        last.path
+                        last_path
                             .to_str()
                             .expect("Last node path should already be valid")
                     )

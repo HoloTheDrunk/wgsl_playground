@@ -120,12 +120,11 @@ impl SdfObject for Element {
 impl Element {
     pub fn to_wgsl_function(&self, label: &str) -> String {
         let formula = self.to_wgsl_expr();
-        let function = formatdoc! {"
-            fn {label}(uv: vec2f) -> f32 {{
+        formatdoc! {
+            "fn {label}(pos: vec2f) -> f32 {{
                 return {formula};
-            }}
-        "};
-        function
+            }}"
+        }
     }
 
     // PERF: horribly inefficient but might not matter
@@ -142,8 +141,10 @@ impl Element {
                     res.push_back(format!(", {}", child.to_wgsl_expr()));
 
                     if let Some(args) = args {
-                        res.push_back(format!(", {})", args.join(", ")));
+                        res.push_back(format!(", {}", args.join(", ")));
                     }
+
+                    res.push_back(")".to_owned());
                 }
 
                 res.into_iter().collect::<String>()
@@ -153,6 +154,8 @@ impl Element {
     }
 }
 
+#[macro_export]
+#[macro_use]
 macro_rules! element {
     ((Node $first:tt [ $(
         ($child:tt $op:expr)
@@ -179,6 +182,7 @@ macro_rules! element {
 
     () => {()};
 }
+pub use element;
 
 #[cfg(test)]
 mod test {
