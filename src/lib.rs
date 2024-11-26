@@ -13,6 +13,11 @@ pub mod timer;
 pub mod ui;
 pub mod utils;
 
+use glam::Vec2;
+use shader_graph::ShaderGraph;
+use ui::{prelude::Element, Ui, UiTheme, UiThemeBorders, UiThemeColors};
+use wgpu::Color;
+
 use {
     mouse::{Mouse, MouseData, MouseUniform},
     texture::{Texture, TexturePair},
@@ -80,6 +85,7 @@ struct State<'a> {
     assets_folder: std::path::PathBuf,
 
     render_pipelines: Vec<Pipeline>,
+    ui_pipeline: Pipeline,
     blit_pipeline: Pipeline,
 
     texture_pair: TexturePair,
@@ -204,6 +210,61 @@ impl<'a> State<'a> {
             })
             .collect::<Vec<_>>();
 
+        // UI pipeline
+        let ui = Ui {
+            theme: UiTheme {
+                colors: UiThemeColors {
+                    primary: Color {
+                        r: 0.,
+                        g: 1.,
+                        b: 1.,
+                        a: 1.,
+                    },
+                    secondary: Color {
+                        r: 1.,
+                        g: 0.,
+                        b: 1.,
+                        a: 1.,
+                    },
+                    tertiary: Color::default(),
+                },
+                borders: UiThemeBorders {
+                    enabled: true,
+                    offset: 0.,
+                    width: 0.01,
+                },
+            },
+            tree: element! {
+                (Node (Node (Leaf (Shape ui::shapes::Circle : (Vec2::new(0.3, 0.3)) (0.1))) []) [
+                    ((Leaf (Shape ui::shapes::Circle : (Vec2::ZERO) (0.1))) ui::element::Operation::Merge),
+                ])
+            },
+        };
+
+        let ui_pipeline_shader_graph = ShaderGraph::try_from_code(
+            ui.wgsl_shader(),
+            Path::new("assets"),
+            "ui_shader".to_owned(),
+        )
+        .expect("Shader code should form a valid graph");
+        let ui_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Ui Pipeline Layout"),
+            bind_group_layouts: &[&texture_pair.get().0.bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        let ui_pipeline = Pipeline {
+            pipeline: Self::create_render_pipeline(
+                &device,
+                &surface_config,
+                &ui_pipeline_shader_graph,
+                &ui_pipeline_layout,
+                "UI Pipeline",
+            )
+            .expect("UI shader should compile"),
+            shader: ui_pipeline_shader_graph,
+            layout: ui_pipeline_layout,
+        };
+
         // Render pipeline
         let blit_pipeline_shader =
             shader_graph::ShaderGraph::try_from_file(assets_folder.join("blit.wgsl").as_path())
@@ -248,6 +309,7 @@ impl<'a> State<'a> {
             size,
             assets_folder,
             render_pipelines,
+            ui_pipeline,
             blit_pipeline,
             texture_pair,
             file_watcher,
@@ -452,6 +514,32 @@ impl<'a> State<'a> {
 
                 render_pass.draw(0..3, 0..1);
             }
+
+            self.texture_pair.swap();
+        }
+
+        // UI
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("UI Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.texture_pair.get().1.texture.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLUE),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            render_pass.set_pipeline(&self.ui_pipeline.pipeline);
+
+            render_pass.set_bind_group(0, &self.texture_pair.get().0.bind_group, &[]);
+
+            render_pass.draw(0..3, 0..1);
 
             self.texture_pair.swap();
         }

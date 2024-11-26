@@ -91,7 +91,13 @@ impl Operation {
 }
 
 #[derive(Debug)]
-pub enum Element {
+pub struct Element {
+    pub label: Option<String>,
+    pub inner: ElementTree,
+}
+
+#[derive(Debug)]
+pub enum ElementTree {
     Node {
         first: Box<Element>,
         children: Vec<(Element, Operation)>,
@@ -101,13 +107,13 @@ pub enum Element {
 
 impl SdfObject for Element {
     fn dist(&self, pos: glam::Vec2) -> f32 {
-        match self {
-            Element::Node { first, children } => {
+        match &self.inner {
+            ElementTree::Node { first, children } => {
                 children.iter().fold(first.dist(pos), |dist, (elem, op)| {
                     op.run(dist, elem.dist(pos))
                 })
             }
-            Element::Leaf(sdf_object) => sdf_object.dist(pos),
+            ElementTree::Leaf(sdf_object) => sdf_object.dist(pos),
         }
     }
 
@@ -129,8 +135,8 @@ impl Element {
 
     // PERF: horribly inefficient but might not matter
     fn to_wgsl_expr(&self) -> String {
-        match self {
-            Element::Node { first, children } => {
+        match &self.inner {
+            ElementTree::Node { first, children } => {
                 let mut res: VecDeque<_> = vec![first.to_wgsl_expr()].into();
 
                 for (child, op) in children.iter() {
@@ -149,7 +155,7 @@ impl Element {
 
                 res.into_iter().collect::<String>()
             }
-            Element::Leaf(sdf_object) => sdf_object.fn_call(),
+            ElementTree::Leaf(sdf_object) => sdf_object.fn_call(),
         }
     }
 }
@@ -160,20 +166,29 @@ macro_rules! element {
     ((Node $first:tt [ $(
         ($child:tt $op:expr)
     ),* $(,)?])) => {
-        Element::Node {
-            first: Box::new(element!($first)),
-            children: vec![$(
-                (element!($child), $op)
-            ),*]
+        $crate::ui::element::Element {
+            label: None,
+            inner: $crate::ui::element::ElementTree::Node {
+                first: Box::new(element!($first)),
+                children: vec![$(
+                    (element!($child), $op)
+                ),*]
+            },
         }
     };
 
     ((Leaf $shape:tt)) => {
-        Element::Leaf(Box::new(element!($shape)))
+        $crate::ui::element::Element {
+            label: None,
+            inner: $crate::ui::element::ElementTree::Leaf(Box::new(element!($shape))),
+        }
     };
 
     ((Leaf $shape:expr)) => {
-        Element::Leaf(Box::new($shape))
+        $crate::ui::element::Element {
+            label: None,
+            inner: $crate::ui::element::ElementTree::Leaf(Box::new($shape)),
+        }
     };
 
     ((Shape $shape:path : $(($arg:expr))*)) => {

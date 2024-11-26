@@ -1,5 +1,5 @@
-mod element;
-mod shapes;
+pub mod element;
+pub mod shapes;
 
 use element::Element;
 
@@ -79,6 +79,11 @@ impl Ui {
             // Fragment shader
             //% include "lib/sdf"
 
+            @group(0) @binding(0)
+            var t_diffuse: texture_2d<f32>;
+            @group(0) @binding(1)
+            var s_diffuse: sampler;
+
             {function}
 
             {border_consts}
@@ -87,7 +92,11 @@ impl Ui {
             fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {{
                 let uv = vec2f(in.tex_coords.x, in.tex_coords.y);
                 let dist = {name}(uv);
-                let color = vec4f({r}, {g}, {b}, {a} * f32(dist < 0.));
+                let color = select(
+                    textureSample(t_diffuse, s_diffuse, uv),
+                    vec4f({r}, {g}, {b}, {a}),
+                    dist < 0.,
+                );
                 {ret}
             }}
         "#}
