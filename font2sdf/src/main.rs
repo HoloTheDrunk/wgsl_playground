@@ -32,6 +32,8 @@ fn main() {
         .join("\n");
 
     std::fs::write(args.out, ascii).unwrap();
+
+    // TODO: output float format
 }
 
 fn build_atlas(rasters: Vec<sdf::SdfRaster>, width: usize, height: usize) -> sdf::SdfRaster {
@@ -40,13 +42,7 @@ fn build_atlas(rasters: Vec<sdf::SdfRaster>, width: usize, height: usize) -> sdf
     let (cell_width, cell_height) = (rasters[0].width as usize, rasters[0].height as usize);
     let cell_size = cell_width * cell_height;
 
-    let mut atlas = sdf::SdfRaster {
-        width: (width * cell_width) as u32,
-        height: (height * cell_height) as u32,
-        buffer: vec![0.; cell_size * (width * height) as usize],
-    };
-
-    let buf = atlas.buffer.as_mut_slice();
+    let mut buf = vec![0.; cell_size * (width * height) as usize];
 
     for i in 0..height.min(rasters.len() / width + rasters.len() % width) {
         let cell_row_length = if rasters.len() - i * width < width {
@@ -74,7 +70,11 @@ fn build_atlas(rasters: Vec<sdf::SdfRaster>, width: usize, height: usize) -> sdf
         }
     }
 
-    atlas
+    sdf::SdfRaster {
+        width: (width * cell_width) as u32,
+        height: (height * cell_height) as u32,
+        buffer: buf,
+    }
 }
 
 fn generate_glyph(font: &sdf::Font, px: f32, c: char) -> sdf::SdfRaster {
