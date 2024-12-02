@@ -1,17 +1,106 @@
-use std::{fs, iter::repeat, path::PathBuf};
+use std::{fs, iter::repeat, path::Path};
 
-use {clap::Parser, easy_signed_distance_field as sdf};
+use bytemuck::{Pod, Zeroable};
+use easy_signed_distance_field as sdf;
+use wgpu::util::DeviceExt as _;
 
-#[derive(Parser)]
-struct Args {
-    font: PathBuf,
-    out: PathBuf,
+use crate::{GpuBuffer, GpuBufferData};
+
+pub struct Font {
+    pub data: FontData,
+    pub uniform: FontUniform,
+    pub buffer: wgpu::Buffer,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub bind_group: wgpu::BindGroup,
 }
 
-fn main() {
-    let args = Args::parse();
+impl Font {
+    pub fn load(device: &wgpu::Device, path: &Path) -> Self {
+        let atlas = generate_atlas(path);
+        let data = FontData { atlas };
 
-    let font_data = fs::read(args.font).expect("Font file should be readable");
+        let GpuBufferData {
+            data: uniform,
+            buffer,
+            bind_group_layout,
+            bind_group,
+        } = Self::init_buffer(device, &data);
+
+        Self {
+            data,
+            uniform,
+            buffer,
+            bind_group_layout,
+            bind_group,
+        }
+    }
+}
+
+impl GpuBuffer<FontUniform> for Font {
+    type Init = FontData;
+
+    fn init_buffer(device: &wgpu::Device, init: &Self::Init) -> GpuBufferData<FontUniform> {
+        let data = FontUniform {
+            size: glam::uvec2(init.atlas.width, init.atlas.height),
+            ..Default::default()
+        };
+
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Font Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[FontUniform::default()]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Font Uniform Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Font Uniform Bind Group"),
+            layout: &bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+
+        GpuBufferData {
+            data,
+            buffer,
+            bind_group_layout,
+            bind_group,
+        }
+    }
+
+    // TODO: Specialize GpuBuffer into mutable / immutable
+    fn write_buffer(&self, queue: &wgpu::Queue) {
+        unreachable!()
+    }
+}
+
+pub struct FontData {
+    atlas: sdf::SdfRaster,
+}
+
+#[derive(Clone, Copy, Default, Pod, Zeroable)]
+#[repr(C, align(16))]
+pub struct FontUniform {
+    pub size: glam::UVec2,
+    _padding: glam::Vec2,
+}
+
+fn generate_atlas(font: &Path) -> sdf::SdfRaster {
+    let font_data = fs::read(font).expect("Font file should be readable");
     let font = sdf::Font::from_bytes(font_data.as_slice(), sdf::FontSettings::default())
         .expect("Font file should be parsable");
 
@@ -23,13 +112,10 @@ fn main() {
         })
         .collect::<(Vec<f32>, Vec<sdf::SdfRaster>)>();
 
-    let rows = 1 << dbg!(usize::BITS - rasters.len().leading_zeros() - 2).max(0);
+    let rows = 1 << (usize::BITS - rasters.len().leading_zeros() - 2);
     let cols = rasters.len() / rows + (rasters.len() % rows > 0) as usize;
-    dbg!((rows, cols));
-    let atlas = build_atlas(rasters, rows, cols);
-    // let atlas = build_atlas(rasters, 7, 4);
 
-    sdf::sdf_to_file(args.out.to_str().unwrap(), &atlas).unwrap();
+    build_atlas(rasters, rows, cols)
 }
 
 fn build_atlas(rasters: Vec<sdf::SdfRaster>, width: usize, height: usize) -> sdf::SdfRaster {
@@ -39,8 +125,6 @@ fn build_atlas(rasters: Vec<sdf::SdfRaster>, width: usize, height: usize) -> sdf
     let cell_size = cell_width * cell_height;
 
     let mut buf = vec![0.; cell_size * (width * height) as usize];
-
-    dbg!((rasters.len(), width, height));
 
     for i in 0..height.min(rasters.len() / width + (rasters.len() % width > 0) as usize) {
         let cell_row_length = if rasters.len().saturating_sub(i * width) < width {

@@ -1,4 +1,5 @@
 pub mod element;
+pub mod font;
 pub mod shapes;
 
 use element::Element;

@@ -5,4 +5,4 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.5.21", features = ["derive"] }
-easy-signed-distance-field = { version = "0.1.1", features = ["render", "export", "font"] }
+easy-signed-distance-field = { version = "0.1.1", features = ["export", "font"] }
