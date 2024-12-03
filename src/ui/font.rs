@@ -1,23 +1,51 @@
+use crate::texture::{Texture, TextureBind};
+
 use std::{fs, iter::repeat, path::Path};
 
-use bytemuck::{Pod, Zeroable};
-use easy_signed_distance_field as sdf;
-use wgpu::util::DeviceExt as _;
+use {
+    bytemuck::{Pod, Zeroable},
+    easy_signed_distance_field as sdf,
+    wgpu::{naga::FastHashMap, util::DeviceExt as _},
+};
 
 use crate::{GpuBuffer, GpuBufferData};
 
 pub struct Font {
     pub data: FontData,
     pub uniform: FontUniform,
+    pub texture_bind: TextureBind,
     pub buffer: wgpu::Buffer,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub bind_group: wgpu::BindGroup,
 }
 
 impl Font {
-    pub fn load(device: &wgpu::Device, path: &Path) -> Self {
-        let atlas = generate_atlas(path);
-        let data = FontData { atlas };
+    pub fn load(device: &wgpu::Device, queue: &wgpu::Queue, path: &Path) -> Self {
+        let chars = ('a'..='z').into_iter().chain('0'..='9');
+        let atlas = generate_atlas(path, chars.clone());
+
+        let texture_bind = Texture::from_bytes(
+            device,
+            queue,
+            unsafe {
+                std::slice::from_raw_parts(
+                    atlas.buffer.as_ptr() as *const u8,
+                    atlas.buffer.len() * 4,
+                )
+            },
+            (atlas.width, atlas.height),
+            wgpu::TextureFormat::R32Float,
+            Some("Font Atlas Texture"),
+        )
+        .unwrap();
+
+        let texture_bind =
+            TextureBind::from_texture(device, texture_bind, "Font Atlas TextureBind");
+
+        let data = FontData {
+            atlas,
+            map: chars.into(),
+        };
 
         let GpuBufferData {
             data: uniform,
@@ -29,10 +57,19 @@ impl Font {
         Self {
             data,
             uniform,
+            texture_bind,
             buffer,
             bind_group_layout,
             bind_group,
         }
+    }
+
+    pub fn map_string(&self, string: &str) -> Result<Vec<u32>, ()> {
+        string
+            .chars()
+            .map(|c| self.data.map.0.get(&c).copied())
+            .collect::<Option<_>>()
+            .ok_or(())
     }
 }
 
@@ -90,6 +127,15 @@ impl GpuBuffer<FontUniform> for Font {
 
 pub struct FontData {
     atlas: sdf::SdfRaster,
+    map: FontCharMap,
+}
+
+pub struct FontCharMap(pub FastHashMap<char, u32>);
+
+impl<Iter: Iterator<Item = char>> From<Iter> for FontCharMap {
+    fn from(iter: Iter) -> Self {
+        Self(iter.enumerate().map(|(i, v)| (v, i as u32)).collect())
+    }
 }
 
 #[derive(Clone, Copy, Default, Pod, Zeroable)]
@@ -99,17 +145,14 @@ pub struct FontUniform {
     _padding: glam::Vec2,
 }
 
-fn generate_atlas(font: &Path) -> sdf::SdfRaster {
+fn generate_atlas<CharIter: Iterator<Item = char>>(font: &Path, chars: CharIter) -> sdf::SdfRaster {
     let font_data = fs::read(font).expect("Font file should be readable");
     let font = sdf::Font::from_bytes(font_data.as_slice(), sdf::FontSettings::default())
         .expect("Font file should be parsable");
 
     let px = 64.;
-    let (_, rasters) = (0..26)
-        .map(|offset| {
-            let c = (b'a' + offset) as char;
-            generate_glyph(&font, px, c)
-        })
+    let (_, rasters) = chars
+        .map(|c| generate_glyph(&font, px, c))
         .collect::<(Vec<f32>, Vec<sdf::SdfRaster>)>();
 
     let rows = 1 << (usize::BITS - rasters.len().leading_zeros() - 2);

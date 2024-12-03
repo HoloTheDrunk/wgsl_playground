@@ -3,6 +3,7 @@ pub mod font;
 pub mod shapes;
 
 use element::Element;
+use font::Font;
 
 use std::fmt::Debug;
 
@@ -36,6 +37,7 @@ pub struct UiThemeBorders {
 pub struct UiTheme {
     pub colors: UiThemeColors,
     pub borders: UiThemeBorders,
+    pub font: Font,
 }
 
 pub struct Ui {
@@ -84,6 +86,11 @@ impl Ui {
             var t_diffuse: texture_2d<f32>;
             @group(0) @binding(1)
             var s_diffuse: sampler;
+
+            @group(1) @binding(0)
+            var ui_t_diffuse: texture_2d<f32>;
+            @group(1) @binding(1)
+            var ui_s_diffuse: sampler;
 
             {function}
 

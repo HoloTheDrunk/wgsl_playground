@@ -13,14 +13,11 @@ pub mod timer;
 pub mod ui;
 pub mod utils;
 
-use glam::Vec2;
-use shader_graph::ShaderGraph;
-use ui::{prelude::Element, Ui, UiTheme, UiThemeBorders, UiThemeColors};
-use wgpu::Color;
-
 use {
     mouse::{Mouse, MouseData, MouseUniform},
+    shader_graph::ShaderGraph,
     texture::{Texture, TexturePair},
+    ui::{font::Font, prelude::Element, Ui, UiTheme, UiThemeBorders, UiThemeColors},
     utils::{FileWatcher, SceneTime},
 };
 
@@ -28,13 +25,14 @@ use std::path::{Path, PathBuf};
 
 use {
     bytemuck::Zeroable,
+    glam::Vec2,
     notify::{
         event::{AccessKind, AccessMode},
         EventKind, RecursiveMode, Watcher,
     },
     seq_macro::seq,
     serde::Deserialize,
-    wgpu::util::DeviceExt,
+    wgpu::{util::DeviceExt, Color},
     winit::platform::x11::WindowBuilderExtX11,
     winit::{
         dpi::{PhysicalPosition, PhysicalSize},
@@ -83,6 +81,8 @@ struct State<'a> {
     size: PhysicalSize<u32>,
 
     assets_folder: std::path::PathBuf,
+
+    ui: Ui,
 
     render_pipelines: Vec<Pipeline>,
     ui_pipeline: Pipeline,
@@ -233,6 +233,11 @@ impl<'a> State<'a> {
                     offset: 0.,
                     width: 0.01,
                 },
+                font: Font::load(
+                    &device,
+                    &queue,
+                    Path::new("assets/fonts/NotoSansMono-Black.ttf"),
+                ),
             },
             tree: element! {
                 (Node (Node (Leaf (Shape ui::shapes::Circle : (Vec2::new(0.3, 0.3)) (0.1))) []) [
@@ -249,7 +254,10 @@ impl<'a> State<'a> {
         .expect("Shader code should form a valid graph");
         let ui_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Ui Pipeline Layout"),
-            bind_group_layouts: &[&texture_pair.get().0.bind_group_layout],
+            bind_group_layouts: &[
+                &texture_pair.get().0.bind_group_layout,
+                &ui.theme.font.bind_group_layout,
+            ],
             push_constant_ranges: &[],
         });
         let ui_pipeline = Pipeline {
@@ -265,7 +273,7 @@ impl<'a> State<'a> {
             layout: ui_pipeline_layout,
         };
 
-        // Render pipeline
+        // Blit pipeline
         let blit_pipeline_shader =
             shader_graph::ShaderGraph::try_from_file(assets_folder.join("blit.wgsl").as_path())
                 .expect("Shader code should be available at path");
@@ -308,6 +316,7 @@ impl<'a> State<'a> {
             surface_config,
             size,
             assets_folder,
+            ui,
             render_pipelines,
             ui_pipeline,
             blit_pipeline,
@@ -538,6 +547,7 @@ impl<'a> State<'a> {
             render_pass.set_pipeline(&self.ui_pipeline.pipeline);
 
             render_pass.set_bind_group(0, &self.texture_pair.get().0.bind_group, &[]);
+            render_pass.set_bind_group(1, &self.ui.theme.font.texture_bind.bind_group, &[]);
 
             render_pass.draw(0..3, 0..1);
 
