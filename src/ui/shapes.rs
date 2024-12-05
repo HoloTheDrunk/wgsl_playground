@@ -57,3 +57,9 @@ impl SdfObject for Rectangle {
         )
     }
 }
+
+impl Rectangle {
+    pub fn new(center: Vec2, half_size: Vec2) -> Self {
+        Self { center, half_size }
+    }
+}

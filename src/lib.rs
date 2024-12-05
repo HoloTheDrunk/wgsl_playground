@@ -83,6 +83,7 @@ struct State<'a> {
     assets_folder: std::path::PathBuf,
 
     ui: Ui,
+    hide_ui: bool,
 
     render_pipelines: Vec<Pipeline>,
     ui_pipeline: Pipeline,
@@ -216,14 +217,14 @@ impl<'a> State<'a> {
                 colors: UiThemeColors {
                     primary: Color {
                         r: 0.,
-                        g: 1.,
-                        b: 1.,
-                        a: 1.,
+                        g: 0.,
+                        b: 0.,
+                        a: 0.,
                     },
                     secondary: Color {
-                        r: 1.,
-                        g: 0.,
-                        b: 1.,
+                        r: 0.83,
+                        g: 0.73,
+                        b: 0.73,
                         a: 1.,
                     },
                     tertiary: Color::default(),
@@ -231,7 +232,7 @@ impl<'a> State<'a> {
                 borders: UiThemeBorders {
                     enabled: true,
                     offset: 0.,
-                    width: 0.01,
+                    width: 0.005,
                 },
                 font: Font::load(
                     &device,
@@ -240,7 +241,7 @@ impl<'a> State<'a> {
                 ),
             },
             tree: element! {
-                (Node (Node (Leaf (Shape ui::shapes::Circle : (Vec2::new(0.3, 0.3)) (0.1))) []) [
+                (Node (Node (Leaf (Shape ui::shapes::Rectangle : (Vec2::new(0.09, 0.5)) (Vec2::new(0.1, 0.6)))) []) [
                     ((Leaf (Shape ui::shapes::Circle : (Vec2::ZERO) (0.1))) ui::element::Operation::Merge),
                 ])
             },
@@ -256,7 +257,10 @@ impl<'a> State<'a> {
             label: Some("Ui Pipeline Layout"),
             bind_group_layouts: &[
                 &texture_pair.get().0.bind_group_layout,
+                // atlas metadata
                 &ui.theme.font.bind_group_layout,
+                // atlas texture
+                &ui.theme.font.texture_bind.bind_group_layout,
             ],
             push_constant_ranges: &[],
         });
@@ -317,6 +321,7 @@ impl<'a> State<'a> {
             size,
             assets_folder,
             ui,
+            hide_ui: true,
             render_pipelines,
             ui_pipeline,
             blit_pipeline,
@@ -528,7 +533,11 @@ impl<'a> State<'a> {
         }
 
         // UI
-        {
+        'ui: {
+            if self.hide_ui {
+                break 'ui;
+            }
+
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("UI Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -547,7 +556,8 @@ impl<'a> State<'a> {
             render_pass.set_pipeline(&self.ui_pipeline.pipeline);
 
             render_pass.set_bind_group(0, &self.texture_pair.get().0.bind_group, &[]);
-            render_pass.set_bind_group(1, &self.ui.theme.font.texture_bind.bind_group, &[]);
+            render_pass.set_bind_group(1, &self.ui.theme.font.bind_group, &[]);
+            render_pass.set_bind_group(2, &self.ui.theme.font.texture_bind.bind_group, &[]);
 
             render_pass.draw(0..3, 0..1);
 
@@ -655,6 +665,18 @@ fn handle_event(state: &mut State<'_>, event: Event<()>, control_flow: &EventLoo
                         },
                     ..
                 } => control_flow.exit(),
+                WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            state: ElementState::Pressed,
+                            physical_key: PhysicalKey::Code(key_code),
+                            ..
+                        },
+                    ..
+                } => match key_code {
+                    KeyCode::Space => state.hide_ui = !state.hide_ui,
+                    _ => (),
+                },
                 WindowEvent::MouseInput { .. } | WindowEvent::CursorMoved { .. } => {
                     state.mouse.process_events(event);
                 }

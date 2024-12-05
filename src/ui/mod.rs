@@ -63,19 +63,19 @@ impl Ui {
         let ret = if self.theme.borders.enabled {
             let Color { r, g, b, a } = self.theme.colors.primary;
             // Extra indent for the final composition to look nice
-            formatdoc! {"
-                return select(
-                        color,
-                        vec4f({r}, {g}, {b}, {a}),
-                        abs(dist - BORDER_OFFSET) < BORDER_WIDTH
-                    );"
+            formatdoc! {
+                "return select(
+                    color,
+                    vec4f({r}, {g}, {b}, {a}),
+                    abs(dist - BORDER_OFFSET) < BORDER_WIDTH
+                );"
             }
         } else {
             "return color;".to_owned()
         };
 
         let Color { r, g, b, a } = self.theme.colors.secondary;
-        formatdoc! {r#"
+        let res = formatdoc! {r#"
             // Vertex shader
             //% include "lib/utils/gen_triangle_vs"
 
@@ -87,10 +87,17 @@ impl Ui {
             @group(0) @binding(1)
             var s_diffuse: sampler;
 
+            struct FontAtlas {{
+                size: vec2<u32>,
+            }}
+
             @group(1) @binding(0)
-            var ui_t_diffuse: texture_2d<f32>;
-            @group(1) @binding(1)
-            var ui_s_diffuse: sampler;
+            var<uniform> atlas: FontAtlas;
+
+            @group(2) @binding(0)
+            var t_atlas: texture_2d<f32>;
+            @group(2) @binding(1)
+            var s_atlas: sampler;
 
             {function}
 
@@ -105,8 +112,22 @@ impl Ui {
                     vec4f({r}, {g}, {b}, {a}),
                     dist < 0.,
                 );
-                {ret}
+                {return}
             }}
-        "#}
+        "#, 
+            return = Self::indent(ret.as_ref(), 1),
+        };
+
+        println!("{res}");
+
+        res
+    }
+
+    fn indent(text: &str, level: usize) -> String {
+        let indent = "    ".repeat(level);
+        text.lines()
+            .enumerate()
+            .map(|(i, s)| format!("{}{s}\n", if i > 0 { indent.as_str() } else { "" }))
+            .collect()
     }
 }
