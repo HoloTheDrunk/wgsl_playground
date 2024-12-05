@@ -219,13 +219,13 @@ impl<'a> State<'a> {
                         r: 0.,
                         g: 0.,
                         b: 0.,
-                        a: 0.,
+                        a: 1.,
                     },
                     secondary: Color {
-                        r: 0.83,
-                        g: 0.73,
-                        b: 0.73,
-                        a: 1.,
+                        r: 1.,
+                        g: 1.,
+                        b: 1.,
+                        a: 0.9,
                     },
                     tertiary: Color::default(),
                 },
@@ -241,9 +241,24 @@ impl<'a> State<'a> {
                 ),
             },
             tree: element! {
-                (Node (Node (Leaf (Shape ui::shapes::Rectangle : (Vec2::new(0.09, 0.5)) (Vec2::new(0.1, 0.6)))) []) [
-                    ((Leaf (Shape ui::shapes::Circle : (Vec2::ZERO) (0.1))) ui::element::Operation::Merge),
-                ])
+                (Node
+                    (Node
+                        (Leaf (Shape ui::shapes::Rectangle : (Vec2::new(0.09, 0.5)) (Vec2::new(0.1, 0.6))))
+                        [])
+                    [
+                        (
+                            (Leaf (Shape ui::shapes::Circle : (Vec2::new(0.25, 0.05)) (0.15)))
+                            ui::element::Operation::RoundMerge { radius: 0.1 }
+                        ),
+                        (
+                            (Leaf (Shape ui::shapes::Rectangle : (Vec2::new(0.5, 0.05)) (Vec2::new(0.15, 0.01))))
+                            ui::element::Operation::RoundMerge { radius: 0.01 }
+                        ),
+                        (
+                            (Leaf (Shape ui::shapes::Rectangle : (Vec2::new(0.5, 0.1)) (Vec2::new(0.15, 0.01))))
+                            ui::element::Operation::RoundMerge { radius: 0.01 }
+                        )
+                    ])
             },
         };
 
@@ -321,7 +336,7 @@ impl<'a> State<'a> {
             size,
             assets_folder,
             ui,
-            hide_ui: true,
+            hide_ui: false,
             render_pipelines,
             ui_pipeline,
             blit_pipeline,

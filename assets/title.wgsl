@@ -24,8 +24,8 @@ struct Mouse {
 var<uniform> mouse: Mouse;
 
 // SDF example constants
-const OUTSIDE_COLOR: vec3<f32> = vec3<f32>(1., 1., 1.);
-const INSIDE_COLOR: vec3<f32> = vec3<f32>(1., 0., 1.);
+const OUTSIDE_COLOR: vec3<f32> = vec3<f32>(0., 0., 0.);
+const INSIDE_COLOR: vec3<f32> = vec3<f32>(.886, .875, .824);
 
 const LINE_DISTANCE: f32 = .25;
 const LINE_THICKNESS: f32 = 0.005;
@@ -57,39 +57,18 @@ fn sdf_example(uv: vec2f) -> vec4f {
 
     let lines = min(major_lines, sub_lines);
 
-    var color: vec3<f32>;
-    switch mouse.state {
-        case Held: {
-            color = f32(dist < 0) * vec3<f32>(1.);
-        }
-        case Clicked: {
-            color = lines * select(INSIDE_COLOR, OUTSIDE_COLOR, dist < 0.);
-        }
-        case Idle, default: {
-            color = lines * select(OUTSIDE_COLOR, INSIDE_COLOR, dist < 0.);
-        }
-    }
+    var color = select(
+        lines * select(OUTSIDE_COLOR, INSIDE_COLOR, dist < 0.), 
+        2. * (0.5 - lines) * INSIDE_COLOR,
+        dist > LINE_THICKNESS && abs(lines) <= 0.5,
+    );
+  
     return vec4<f32>(color, 1.);
 }
-
-fn perlin_octaves(uv: vec2f, octaves: i32) -> f32 {
-    let noiseScale = length(mouse.pos) * 10.;
-    var col = 0.;
-    for (var i: i32 = 1; i < octaves; i++) {
-        let offset = (uv + (time / 10.) * vec2f(f32(i), f32(i))) * f32(10 * i);
-        col -= perlinNoise2(offset) / f32(i);
-    }
-    return col;
-}
-
-const DISTORTION_FACTOR: f32 = 0.0025;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var uv = vec2f(in.tex_coords.x, in.tex_coords.y);
-
-    uv.x += DISTORTION_FACTOR * perlin_octaves(uv, 5);
-    uv.y += DISTORTION_FACTOR * perlin_octaves(uv, 5);
 
     return sdf_example(uv);
 }
