@@ -24,7 +24,7 @@ struct Mouse {
 var<uniform> mouse: Mouse;
 
 // SDF example constants
-const OUTSIDE_COLOR: vec3<f32> = vec3<f32>(0., 1., 1.);
+const OUTSIDE_COLOR: vec3<f32> = vec3<f32>(1., 1., 1.);
 const INSIDE_COLOR: vec3<f32> = vec3<f32>(1., 0., 1.);
 
 const LINE_DISTANCE: f32 = .25;

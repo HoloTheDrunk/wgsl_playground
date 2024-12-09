@@ -63,3 +63,18 @@ impl Rectangle {
         Self { center, half_size }
     }
 }
+
+#[derive(Debug)]
+pub struct Text {
+    pub string: String,
+}
+
+impl SdfObject for Text {
+    fn dist(&self, pos: Vec2) -> f32 {
+        todo!()
+    }
+
+    fn fn_call(&self) -> String {
+        todo!()
+    }
+}

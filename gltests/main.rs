@@ -14,11 +14,9 @@ use {
 };
 
 fn main() {
-    let elem = element! {
-        (Node (Node (Leaf Circle::default()) []) [
-            ((Leaf (Shape Circle : (Vec2::ZERO) (1.))) Operation::Merge),
-        ])
-    };
+    env_logger::init();
+
+    let (device, queue) = setup();
 
     let ui = Ui {
         theme: UiTheme {
@@ -42,47 +40,21 @@ fn main() {
                 offset: 0.,
                 width: 0.01,
             },
+            font: Font::load(
+                &device,
+                &queue,
+                Path::new("assets/fonts/NotoSansMono-Black.ttf"),
+            ),
         },
-        tree: elem,
+        tree: element! {
+            (Node (Node (Leaf Circle::default()) []) [
+                ((Leaf (Shape Circle : (Vec2::ZERO) (1.))) Operation::Merge),
+            ])
+        },
     };
 
     let shader = ui.wgsl_shader();
     println!("{}", shader);
-
-    env_logger::init();
-
-    let event_loop = EventLoop::new().unwrap();
-    let window = WindowBuilder::new()
-        .with_title("ui::test::ui_shader")
-        .with_inner_size(PhysicalSize::new(600, 600))
-        .build(&event_loop)
-        .unwrap();
-
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::PRIMARY,
-        ..Default::default()
-    });
-
-    // Surface
-    let surface = instance.create_surface(window).unwrap();
-
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::default(),
-        compatible_surface: Some(&surface),
-        force_fallback_adapter: false,
-    }))
-    .unwrap();
-
-    let (device, _) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            memory_hints: wgpu::MemoryHints::Performance,
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            label: None,
-        },
-        None,
-    ))
-    .expect("Should find compatible device");
 
     let shader_code =
         ShaderGraph::try_from_code(shader, Path::new("assets"), "ui_shader".to_owned())
@@ -103,4 +75,40 @@ fn main() {
             panic!("Failed to compile shader: {comp_info:#?}");
         }
     }
+}
+
+fn setup() -> (wgpu::Device, wgpu::Queue) {
+    let event_loop = EventLoop::new().unwrap();
+    let window = WindowBuilder::new()
+        .with_title("ui::test::ui_shader")
+        .with_inner_size(PhysicalSize::new(600, 600))
+        .build(&event_loop)
+        .unwrap();
+
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::PRIMARY,
+        ..Default::default()
+    });
+
+    let surface = instance.create_surface(window).unwrap();
+
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::default(),
+        compatible_surface: Some(&surface),
+        force_fallback_adapter: false,
+    }))
+    .unwrap();
+
+    let (device, queue) = pollster::block_on(adapter.request_device(
+        &wgpu::DeviceDescriptor {
+            memory_hints: wgpu::MemoryHints::Performance,
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            label: None,
+        },
+        None,
+    ))
+    .expect("Should find compatible device");
+
+    (device, queue)
 }

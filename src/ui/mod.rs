@@ -14,7 +14,9 @@ use {
 };
 
 pub mod prelude {
-    pub use super::{element::*, shapes::*, SdfObject, Ui, UiTheme, UiThemeBorders, UiThemeColors};
+    pub use super::{
+        element::*, font::*, shapes::*, SdfObject, Ui, UiTheme, UiThemeBorders, UiThemeColors,
+    };
 }
 
 pub trait SdfObject: Debug {
@@ -66,7 +68,7 @@ impl Ui {
             formatdoc! {
                 "return select(
                     color,
-                    vec4f({r}, {g}, {b}, {a}),
+                    mix(color, vec4f({r:?}, {g:?}, {b:?}, 1.), {a:?}),
                     abs(dist - BORDER_OFFSET) < BORDER_WIDTH
                 );"
             }
@@ -107,9 +109,10 @@ impl Ui {
             fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {{
                 let uv = vec2f(in.tex_coords.x, in.tex_coords.y);
                 let dist = {name}(uv);
-                let color = select(
-                    textureSample(t_diffuse, s_diffuse, uv),
-                    vec4f({r}, {g}, {b}, {a}),
+                var color = textureSample(t_diffuse, s_diffuse, uv);
+                color = select(
+                    color,
+                    mix(color, vec4f({r:?}, {g:?}, {b:?}, 1.), {a:?}),
                     dist < 0.,
                 );
                 {return}
