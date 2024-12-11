@@ -3,32 +3,46 @@ pub use lib::*;
 mod lib {
     use std::{collections::VecDeque, fmt::Debug, ops::Deref};
 
+    // We start by defining what information a tree should be able to give.
+    // Here, a tree is represented recursively, no matter the actual data layout of the
+    // implementation.
     pub trait Tree {
+        /// Type of the data stored within nodes.
         type Value;
 
+        /// Value of the current tree root.
         fn value(&self) -> &Self::Value;
+        /// Child subtrees.
         fn children(&self) -> impl DoubleEndedIterator<Item = &Self>;
     }
 
+    /// Depth-first iterator over a [Tree] data structure.
     pub struct Dfs<'c, T: Deref>
     where
         <T as Deref>::Target: Tree,
     {
+        /// The current node.
         data: &'c <T as Deref>::Target,
+        /// LIFO stack of Nodes seen and to be visited.
         to_visit: Vec<&'c <T as Deref>::Target>,
         done: bool,
     }
 
     impl<'c, T: Deref> Iterator for Dfs<'c, T>
     where
-        <T as Deref>::Target: Tree + Debug,
+        <T as Deref>::Target: Tree,
     {
         type Item = &'c <T as Deref>::Target;
 
         fn next(&mut self) -> Option<Self::Item> {
+            // Add the children in reverse order so that the leftmost one is on top of the stack.
             self.to_visit.extend(self.data.children().rev());
 
+            // No children left to visit means we've gone through every node and we're currently at
+            // the last leaf.
             if self.to_visit.is_empty() {
+                // The `done` flag is necessary since we need to output the last node currently
+                // held in the `data` field.
                 if self.done {
                     return None;
                 }
@@ -45,6 +59,7 @@ mod lib {
     }
 
     pub trait ToDfs: Tree {
+        /// Depth-first iterator over the nodes of the given tree.
         fn dfs(&self) -> Dfs<&Self>;
     }
 
@@ -68,6 +83,7 @@ mod lib {
     }
 
     pub trait ToBfs: Tree {
+        /// Breadth-first iterator over the nodes of the given tree.
         fn bfs(&self) -> Bfs<&Self>;
     }
 
@@ -83,7 +99,7 @@ mod lib {
 
     impl<'c, T: Deref> Iterator for Bfs<'c, T>
     where
-        <T as Deref>::Target: Tree + Debug,
+        <T as Deref>::Target: Tree,
     {
         type Item = &'c <T as Deref>::Target;
 
@@ -112,6 +128,7 @@ mod test {
     use super::lib::{ToBfs, ToDfs, Tree};
 
     #[derive(Debug)]
+    // "Ego" because it has a mandatory first element (head). I am very funny. Trust.
     enum EgoTree<Meta> {
         Node {
             meta: Meta,
@@ -145,15 +162,21 @@ mod test {
         }
     }
 
-    #[macro_export]
+    // Don't abuse macros or metaprogramming in general in actual code.
     macro_rules! ego {
-        ((Node ($meta:expr) $first:tt [ $(
-            $child:tt
-        ),* $(,)?])) => {
+        ((Node ($meta:expr) $first:tt $($child:tt)+)) => {
             EgoTree::Node {
                 meta: $meta,
                 first: Box::new(ego!($first)),
-                children: vec![$(ego!($child)),*],
+                children: vec![$(ego!($child)),+],
+            }
+        };
+
+        ((Node ($meta:expr) $first:tt)) => {
+            EgoTree::Node {
+                meta: $meta,
+                first: Box::new(ego!($first)),
+                children: vec![],
             }
         };
 
@@ -165,14 +188,13 @@ mod test {
 
         () => {()};
     }
-    pub use ego;
 
     fn simple_ego() -> EgoTree<&'static str> {
         ego! {
             (Node ("A")
                 (Node ("B")
-                    (Leaf ("D")) [])
-                [(Leaf ("C"))])
+                    (Leaf ("D")))
+                (Leaf ("C")))
         }
     }
 
@@ -192,11 +214,13 @@ mod test {
 
     #[test]
     fn simple_dfs() {
-        meta_traversal(simple_ego().dfs());
+        let res = meta_traversal(simple_ego().dfs());
+        assert_eq!("ABDC", res.join(""));
     }
 
     #[test]
     fn simple_bfs() {
-        meta_traversal(simple_ego().bfs());
+        let res = meta_traversal(simple_ego().bfs());
+        assert_eq!("ABCD", res.join(""));
     }
 }

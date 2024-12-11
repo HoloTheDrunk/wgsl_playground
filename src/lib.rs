@@ -4,13 +4,13 @@
 #![feature(let_chains)]
 
 //! # wgsl_playground
-//! Simple WGSL shader hot-reloading playground.
+//! "Simple" WGSL shader hot-reloading playground.
 
 pub mod mouse;
 pub mod shader_graph;
 pub mod texture;
 pub mod timer;
-mod tree;
+pub mod tree;
 pub mod ui;
 pub mod utils;
 
