@@ -62,15 +62,21 @@ impl Ui {
             "".to_owned()
         };
 
+        let aa = format!(
+            "1. - min(20. * acos(1. - max(0.46 * ({}), 0.)), 1.)",
+            if self.theme.borders.enabled {
+                "abs(dist - BORDER_OFFSET) - .5 * BORDER_WIDTH"
+            } else {
+                "abs(dist)"
+            }
+        );
+
         let ret = if self.theme.borders.enabled {
             let Color { r, g, b, a } = self.theme.colors.primary;
             // Extra indent for the final composition to look nice
             formatdoc! {
-                "return select(
-                    color,
-                    mix(color, vec4f({r:?}, {g:?}, {b:?}, 1.), {a:?}),
-                    abs(dist - BORDER_OFFSET) < BORDER_WIDTH
-                );"
+                "let aa = {aa};
+                return mix(color, vec4f({r:?}, {g:?}, {b:?}, 1.), aa * {a:?});"
             }
         } else {
             "return color;".to_owned()
@@ -109,10 +115,10 @@ impl Ui {
             fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {{
                 let uv = vec2f(in.tex_coords.x, in.tex_coords.y);
                 let dist = {name}(uv);
-                var color = textureSample(t_diffuse, s_diffuse, uv);
-                color = select(
-                    color,
-                    mix(color, vec4f({r:?}, {g:?}, {b:?}, 1.), {a:?}),
+                let t_col = textureSample(t_diffuse, s_diffuse, uv);
+                let color = select(
+                    t_col,
+                    mix(t_col, vec4f({r:?}, {g:?}, {b:?}, 1.), {a:?}),
                     dist < 0.,
                 );
                 {return}
