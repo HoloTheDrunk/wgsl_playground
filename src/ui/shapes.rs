@@ -28,6 +28,10 @@ impl SdfObject for Circle {
             self.center.x, self.center.y, self.radius
         )
     }
+
+    fn name(&self) -> &'static str {
+        "Circle"
+    }
 }
 
 impl Circle {
@@ -56,6 +60,10 @@ impl SdfObject for Rectangle {
             self.center.x, self.center.y, self.half_size.x, self.half_size.y,
         )
     }
+
+    fn name(&self) -> &'static str {
+        "Rectangle"
+    }
 }
 
 impl Rectangle {
@@ -76,5 +84,9 @@ impl SdfObject for Text {
 
     fn fn_call(&self) -> String {
         todo!()
+    }
+
+    fn name(&self) -> &'static str {
+        "Text"
     }
 }

@@ -1,12 +1,13 @@
+use super::SdfObject;
+
+use std::collections::VecDeque;
+
 use {
     glam::{FloatExt as _, Vec2},
     indoc::{formatdoc, indoc},
-    std::collections::VecDeque,
 };
 
-use super::SdfObject;
-
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, strum::Display)]
 pub enum Operation {
     Merge,
     Intersect,
@@ -120,6 +121,10 @@ impl SdfObject for Element {
     // TODO: Organize this better to avoid having to do this.
     fn fn_call(&self) -> String {
         unreachable!("Don't call this")
+    }
+
+    fn name(&self) -> &'static str {
+        "Element"
     }
 }
 

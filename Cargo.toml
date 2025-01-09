@@ -20,6 +20,7 @@ wgpu = "22.1.0"
 winit = { version = "0.29.15", features = ["rwh_05"] }
 indoc = "2.0.5"
 easy-signed-distance-field = { version = "0.1.1", features = ["font"] }
+strum = { version = "0.26.3", features = ["derive"] }
 
 [dependencies.macros]
 path = "macros/"

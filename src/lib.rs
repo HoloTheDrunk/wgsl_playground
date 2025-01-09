@@ -7,6 +7,7 @@
 //! "Simple" WGSL shader hot-reloading playground.
 
 pub mod mouse;
+mod qol;
 pub mod shader_graph;
 pub mod texture;
 pub mod timer;
