@@ -1,3 +1,5 @@
+pub mod arbre;
+pub mod dot;
 pub mod element;
 pub mod font;
 pub mod shapes;
@@ -22,6 +24,7 @@ pub mod prelude {
 pub trait SdfObject: Debug {
     fn dist(&self, pos: Vec2) -> f32;
     fn fn_call(&self) -> String;
+    fn name(&self) -> &'static str;
 }
 
 pub struct UiThemeColors {
