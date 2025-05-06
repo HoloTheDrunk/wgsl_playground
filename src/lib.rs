@@ -6,11 +6,14 @@
 //! # wgsl_playground
 //! Simple WGSL shader hot-reloading playground.
 
+mod geometry;
 mod mouse;
 mod shader_graph;
 mod texture;
 mod timer;
 mod utils;
+
+use geometry::{InstanceRaw, Shape, Vertex};
 
 use {
     mouse::{Mouse, MouseData, MouseUniform},
@@ -80,6 +83,8 @@ struct State<'a> {
 
     render_pipelines: Vec<Pipeline>,
     blit_pipeline: Pipeline,
+
+    shapes: Vec<Shape>,
 
     texture_pair: TexturePair,
 
@@ -283,7 +288,7 @@ impl<'a> State<'a> {
                     compilation_options: Default::default(),
                     module: &shader,
                     entry_point: "vs_main",
-                    buffers: &[],
+                    buffers: &[Vertex::desc(), InstanceRaw::desc()],
                 },
                 fragment: Some(wgpu::FragmentState {
                     compilation_options: Default::default(),
