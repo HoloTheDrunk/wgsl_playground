@@ -35,7 +35,6 @@ impl From<[f32; 3]> for Vertex {
     }
 }
 
-#[repr(C)]
 #[derive(Clone, Debug)]
 pub struct Shape {
     pub vertices: Vec<Vertex>,
@@ -58,11 +57,26 @@ pub struct InstancedShape {
     instances: Vec<Instance>,
     /// Whether the GPU buffer has been updated to match CPU data.
     is_synced: bool,
-    buffer: wgpu::Buffer,
+    pub vertex_buffer: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+    pub instance_buffer: wgpu::Buffer,
 }
 
 impl InstancedShape {
-    fn new(device: &wgpu::Device, shape: Shape, instances: Vec<Instance>) -> Self {
+    pub fn new(device: &wgpu::Device, shape: Shape, instances: Vec<Instance>) -> Self {
+        let vertex_data = shape.vertices.as_slice();
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(&vertex_data),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let index_data = shape.indices.as_slice();
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Index Buffer"),
+            contents: bytemuck::cast_slice(&index_data),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
         let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
@@ -74,15 +88,26 @@ impl InstancedShape {
             shape,
             instances,
             is_synced: true,
-            buffer: instance_buffer,
+            vertex_buffer,
+            index_buffer,
+            instance_buffer,
         }
+    }
+
+    pub fn shape(&self) -> &Shape {
+        &self.shape
+    }
+
+    pub fn count(&self) -> usize {
+        self.instances.len()
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Instance {
-    position: glam::Vec3,
-    rotation: glam::Quat,
+    pub position: glam::Vec3,
+    pub rotation: glam::Quat,
+    pub color: glam::Vec3,
 }
 
 impl Instance {
@@ -91,6 +116,7 @@ impl Instance {
             model_matrix: (glam::Mat4::from_translation(self.position)
                 * glam::Mat4::from_quat(self.rotation))
             .to_cols_array_2d(),
+            color: [self.color.x, self.color.y, self.color.z],
         }
     }
 }
@@ -99,6 +125,7 @@ impl Instance {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct InstanceRaw {
     model_matrix: [[f32; 4]; 4],
+    color: [f32; 3],
 }
 
 impl InstanceRaw {
@@ -134,6 +161,11 @@ impl InstanceRaw {
                     offset: mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
                     shader_location: 8,
                     format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
+                    shader_location: 9,
+                    format: wgpu::VertexFormat::Float32x3,
                 },
             ],
         }

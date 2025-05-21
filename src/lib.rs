@@ -6,6 +6,7 @@
 //! # wgsl_playground
 //! Simple WGSL shader hot-reloading playground.
 
+mod camera;
 mod geometry;
 mod mouse;
 mod shader_graph;
@@ -13,15 +14,17 @@ mod texture;
 mod timer;
 mod utils;
 
-use geometry::{InstanceRaw, Shape, Vertex};
-
 use {
+    geometry::{InstanceRaw, InstancedShape, Shape, Vertex},
     mouse::{Mouse, MouseData, MouseUniform},
     texture::{Texture, TexturePair},
     utils::{FileWatcher, SceneTime},
 };
 
-use std::path::{Path, PathBuf};
+use std::{
+    f32::consts::PI,
+    path::{Path, PathBuf},
+};
 
 use {
     bytemuck::Zeroable,
@@ -84,7 +87,7 @@ struct State<'a> {
     render_pipelines: Vec<Pipeline>,
     blit_pipeline: Pipeline,
 
-    shapes: Vec<Shape>,
+    shapes: InstancedShape,
 
     texture_pair: TexturePair,
 
@@ -200,6 +203,7 @@ impl<'a> State<'a> {
                         &render_pipeline_shader,
                         &render_pipeline_layout,
                         format!("Render Pipeline ({path})").as_str(),
+                        false,
                     )
                     .unwrap_or_else(|_| panic!("Shader should compile ({path})")),
                     shader: render_pipeline_shader,
@@ -225,6 +229,7 @@ impl<'a> State<'a> {
                 &blit_pipeline_shader,
                 &blit_pipeline_layout,
                 "Blit Pipeline",
+                true,
             )
             .expect("Shader should compile"),
             shader: blit_pipeline_shader,
@@ -241,6 +246,25 @@ impl<'a> State<'a> {
         }
         file_watcher.watch(assets_folder.join("blit.wgsl").as_path());
 
+        // Shapes
+        let shape_count = 5;
+        let shapes = InstancedShape::new(
+            &device,
+            geometry::SQUARE.clone(),
+            (0..shape_count)
+                .map(move |i| {
+                    let position = glam::Vec3::new((i as f32 - 2.) / 4., 0., 0.);
+                    let rotation = glam::Quat::from_axis_angle(glam::Vec3::Z, -PI * i as f32 / 8.);
+                    let color = glam::Vec3::new(1., i as f32 / shape_count as f32, 0.1 * i as f32);
+                    geometry::Instance {
+                        position,
+                        rotation,
+                        color,
+                    }
+                })
+                .collect(),
+        );
+
         Self {
             window,
             surface,
@@ -251,6 +275,7 @@ impl<'a> State<'a> {
             assets_folder,
             render_pipelines,
             blit_pipeline,
+            shapes,
             texture_pair,
             file_watcher,
             time,
@@ -264,6 +289,7 @@ impl<'a> State<'a> {
         shader_graph: &shader_graph::ShaderGraph,
         render_pipeline_layout: &wgpu::PipelineLayout,
         label: &str,
+        blit: bool,
     ) -> Result<wgpu::RenderPipeline, wgpu::CompilationInfo> {
         let shader_code = shader_graph
             .finish()
@@ -279,6 +305,8 @@ impl<'a> State<'a> {
             return Err(comp_info);
         }
 
+        let buffers = [Vertex::desc(), InstanceRaw::desc()];
+
         Ok(
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 cache: None,
@@ -288,7 +316,7 @@ impl<'a> State<'a> {
                     compilation_options: Default::default(),
                     module: &shader,
                     entry_point: "vs_main",
-                    buffers: &[Vertex::desc(), InstanceRaw::desc()],
+                    buffers: if blit { &[] } else { &buffers },
                 },
                 fragment: Some(wgpu::FragmentState {
                     compilation_options: Default::default(),
@@ -406,6 +434,7 @@ impl<'a> State<'a> {
                             .expect("Last node path should already be to be valid")
                     )
                     .as_str(),
+                    false,
                 ) {
                     pipeline.pipeline = new_pipeline;
                 }
@@ -434,7 +463,7 @@ impl<'a> State<'a> {
                         view: &self.texture_pair.get().1.texture.view,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::RED),
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                             store: wgpu::StoreOp::Store,
                         },
                     })],
@@ -445,11 +474,23 @@ impl<'a> State<'a> {
 
                 render_pass.set_pipeline(&render_pipeline.pipeline);
 
+                render_pass.set_vertex_buffer(0, self.shapes.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(
+                    self.shapes.index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                render_pass.set_vertex_buffer(1, self.shapes.instance_buffer.slice(..));
+
                 render_pass.set_bind_group(0, &self.texture_pair.get().0.bind_group, &[]);
                 render_pass.set_bind_group(1, &self.time.bind_group, &[]);
                 render_pass.set_bind_group(2, &self.mouse.bind_group, &[]);
 
-                render_pass.draw(0..3, 0..1);
+                // render_pass.draw(0..3, 0..1);
+                render_pass.draw_indexed(
+                    0..self.shapes.shape().indices.len() as u32,
+                    0,
+                    0..self.shapes.count() as u32,
+                );
             }
 
             self.texture_pair.swap();

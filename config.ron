@@ -4,5 +4,5 @@ Config (
 
     fps_limit: Some(400),
     assets_folder: "assets",
-    shader_paths: ["shader", "recolor"],
+    shader_paths: ["simple"],
 )
