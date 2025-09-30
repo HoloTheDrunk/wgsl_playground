@@ -21,6 +21,9 @@ pub struct Camera {
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub bind_group: wgpu::BindGroup,
     pub controller: CameraController,
+
+    pub active: bool,
+    pub target_texture: Option<ResourceHandle<Texture>>,
 }
 
 impl Camera {
@@ -228,4 +231,8 @@ impl CameraUniform {
             view_proj: camera.build_view_projection_matrix().to_cols_array_2d(),
         }
     }
+}
+
+pub struct CameraHandler {
+    pub cameras: Vec<Camera>,
 }
