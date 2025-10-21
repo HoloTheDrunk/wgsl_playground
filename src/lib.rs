@@ -1,7 +1,6 @@
 #![allow(unused)]
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
-#![feature(let_chains)]
 
 //! # wgsl_playground
 //! Simple WGSL shader hot-reloading playground.

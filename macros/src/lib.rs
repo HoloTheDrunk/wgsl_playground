@@ -16,6 +16,10 @@ pub fn generate_wgsl_enum(args: TokenStream, item: TokenStream) -> TokenStream {
         abort_call_site!("Must provide a path to generate the enum at");
     };
 
+    if let Some(parent) = path.parent() && !parent.exists() {
+        std::fs::create_dir_all(parent).unwrap_or_else(|err| abort_call_site!("Failed to create intermediate parent directories: {}", err));
+    }
+
     let parsed_item = parse_macro_input!(item as ItemEnum);
 
     let mut counter = None;
